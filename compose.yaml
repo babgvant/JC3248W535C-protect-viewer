@@ -1,0 +1,27 @@
+services:
+  gateway:
+    build: ./gateway
+    restart: unless-stopped
+    init: true
+    ports:
+      - "${LAN_IP:?Set LAN_IP to the Pi LAN address}:8080:8080"
+    volumes:
+      - ./gateway/config.json:/config/config.json:ro
+      - ./gateway/secrets:/run/secrets:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m,noexec,nosuid
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 768m
+    cpus: 2.0
+    stop_grace_period: 15s
+    logging:
+      driver: json-file
+      options: {max-size: "5m", max-file: "2"}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2)"]
+      interval: 30s
+      timeout: 3s
+      retries: 3

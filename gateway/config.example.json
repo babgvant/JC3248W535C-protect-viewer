@@ -1,0 +1,10 @@
+{
+  "token_file": "/run/secrets/viewer_token",
+  "idle_seconds": 5,
+  "max_workers": 2,
+  "max_clients": 8,
+  "cameras": [
+    {"id": "front", "name": "Front", "url_file": "/run/secrets/front_url", "fps": 10, "quality": 5, "mode": "fit", "rotation": 0, "decoder": "software"},
+    {"id": "doorbell", "name": "Doorbell", "url_file": "/run/secrets/doorbell_url", "fps": 10, "quality": 5, "mode": "fill", "rotation": 0, "decoder": "software"}
+  ]
+}

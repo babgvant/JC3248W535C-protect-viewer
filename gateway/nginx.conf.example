@@ -1,0 +1,17 @@
+# Optional existing LAN TLS proxy; replace hostname and cert paths.
+# Keep 8080 reachable only from this proxy/the trusted viewer VLAN.
+server {
+    listen 443 ssl;
+    server_name viewer.home.arpa;
+    ssl_certificate /etc/nginx/certs/viewer.crt;
+    ssl_certificate_key /etc/nginx/certs/viewer.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_read_timeout 15s;
+        proxy_set_header Authorization $http_authorization;
+    }
+}

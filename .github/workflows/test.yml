@@ -1,0 +1,21 @@
+name: local-viewer-checks
+on: [push, pull_request]
+jobs:
+  host:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.8'
+      - run: pip install -r gateway/requirements.txt imageio-ffmpeg==0.6.0
+      - run: python -m unittest discover -s tests -v
+      - run: cc -Wall -Wextra -Ifirmware/main tests/test_firmware.c firmware/main/multipart.c firmware/main/viewer_state.c -o /tmp/test_viewer && /tmp/test_viewer
+      - run: python tools/test-media.py
+  firmware:
+    runs-on: ubuntu-24.04
+    container: espressif/idf:v5.5.2
+    steps:
+      - uses: actions/checkout@v4
+      - run: . /opt/esp/idf/export.sh && idf.py -C firmware set-target esp32s3 build
+        shell: bash
