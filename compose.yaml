@@ -3,11 +3,16 @@ services:
     build: ./gateway
     restart: unless-stopped
     init: true
+    user: "${VIEWER_UID:-10001}:${VIEWER_GID:-10001}"
     ports:
       - "${LAN_IP:?Set LAN_IP to the Pi LAN address}:8080:8080"
     volumes:
-      - ./gateway/config.json:/config/config.json:ro
-      - ./gateway/secrets:/run/secrets:ro
+      - type: bind
+        source: ./gateway/config.json
+        target: /config/config.json
+        read_only: true
+        bind:
+          create_host_path: false
     read_only: true
     tmpfs:
       - /tmp:size=8m,noexec,nosuid

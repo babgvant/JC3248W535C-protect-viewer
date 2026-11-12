@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 gateway/config.json
+gateway/config.json.*
 gateway/secrets/
 firmware/sdkconfig
 firmware/sdkconfig.old

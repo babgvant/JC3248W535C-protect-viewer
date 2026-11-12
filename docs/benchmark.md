@@ -23,16 +23,13 @@ Output storage is native 320×480; fit can letterbox a smaller non-upscaled sour
 
 ## Automated soak and fault injection
 
-Install gateway requirements in a local venv; commands run from project root. The token file must be readable by the invoking account. For HTTPS, configure the client's OS/Python CA trust; do not use a certificate bypass.
+Install gateway requirements in a local venv; commands run from project root. The single gateway config must be readable by the invoking account. For HTTPS, set `--gateway https://YOUR_HOST` and configure the client's OS/Python CA trust; do not use a certificate bypass.
 
 ```sh
-python tools/soak.py --gateway http://PI_LAN_IP:8080 \
-  --token-file /secure/viewer_token --seconds 86400 --dwell 30 > soak.jsonl
-python tools/soak.py --gateway http://PI_LAN_IP:8080 \
-  --token-file /secure/viewer_token --seconds 300 --rapid > rapid.jsonl
+python tools/soak.py --config gateway/config.json --seconds 86400 --dwell 30 > soak.jsonl
+python tools/soak.py --config gateway/config.json --seconds 300 --rapid > rapid.jsonl
 # Run concurrently with a normal reader:
-python tools/soak.py --gateway http://PI_LAN_IP:8080 \
-  --token-file /secure/viewer_token --seconds 300 --slow > slow.jsonl
+python tools/soak.py --config gateway/config.json --seconds 300 --slow > slow.jsonl
 ```
 
 The rapid tool switches after short dwell intervals between complete frames; it does not replace a real rapid-touch test or cancellation during a blocked connect. Slow-client testing should also include a client that stops reading altogether (covered by the local automated gateway test).

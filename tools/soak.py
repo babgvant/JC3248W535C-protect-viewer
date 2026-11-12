@@ -6,12 +6,17 @@ import asyncio
 import json
 import random
 import time
+import sys
 from pathlib import Path
 import aiohttp
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'gateway'))
+from config import load_config
 
 
 async def main(a):
-    headers={'Authorization':'Bearer '+a.token_file.read_text().strip()}
+    cfg=load_config(a.config)
+    if not a.gateway: a.gateway='http://'+cfg['lan_ip']+':8080'
+    headers={'Authorization':'Bearer '+cfg['token']}
     timeout=aiohttp.ClientTimeout(total=None,connect=3,sock_read=10)
     end=time.monotonic()+a.seconds
     async with aiohttp.ClientSession(headers=headers,timeout=timeout) as session:
@@ -50,7 +55,8 @@ async def main(a):
 
 if __name__=='__main__':
     p=argparse.ArgumentParser()
-    p.add_argument('--gateway',required=True);p.add_argument('--token-file',type=Path,required=True)
+    p.add_argument('--gateway',help='override configured LAN address, e.g. an HTTPS URL')
+    p.add_argument('--config',type=Path,default=Path(__file__).resolve().parents[1]/'gateway/config.json')
     p.add_argument('--seconds',type=int,default=86400);p.add_argument('--dwell',type=float,default=30)
     p.add_argument('--rapid',action='store_true');p.add_argument('--slow',action='store_true')
     asyncio.run(main(p.parse_args()))

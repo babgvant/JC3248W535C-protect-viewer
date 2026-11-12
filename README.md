@@ -11,26 +11,19 @@ Use a 64-bit Linux installation and Docker Compose v2. Commands below run from t
 1. Inspect the Pi with `sh tools/pi-inventory.sh > pi-inventory.txt`. Record OS, cooling, existing workload, FFmpeg build, devices and available decoders.
 2. In Protect's per-camera settings, enable its local RTSP/RTSPS output (look for Share Livestream / Secure RTSPS Output; older versions group profiles under Advanced). Copy each offered low/medium/high URL exactly. Treat the entire URL as a password. Do not infer codec from the URL or blindly rewrite RTSPS ports. Start with the lowest profile, then probe and compare quality. Doorbell main and package cameras may be separate streams.
 3. If Frigate/go2rtc already exposes a local stream, probe that URL before choosing it. A restream can reduce source sessions but still carries H.264/H.265. Verify an actual JPEG/transcoding output before reusing one. No go2rtc instance was available for inspection here.
-4. Provision files:
+4. Initialize the single private configuration and deploy:
 
 ```sh
-mkdir -p gateway/secrets
-cp gateway/config.example.json gateway/config.json
-openssl rand -hex 32 > gateway/secrets/viewer_token
-# Use an editor to place ONE exact source URL in each file; avoid shell history.
-nano gateway/secrets/front_url
-nano gateway/secrets/doorbell_url
-chmod 750 gateway/secrets
-chmod 640 gateway/secrets/*
-# Container runs as 10001. Use a dedicated group/ACL or this ownership:
-sudo chown -R 10001:10001 gateway/secrets
-export LAN_IP=192.168.1.50
-docker compose build
-docker compose up -d
-docker compose ps
+python3 tools/deploy.py init --lan-ip 192.168.1.50
+nano gateway/config.json
+python3 tools/deploy.py check
+python3 tools/deploy.py up
+python3 tools/deploy.py status
 ```
 
-Remove the doorbell entry for a one-camera installation, or add entries in swipe order. Every ID must be unique and stable (`[a-z0-9_-]`, 1–32 chars). Names use 1–31 ASCII characters, rendered uppercase by the small firmware font. Required fields are `id`, `name`, `url_file`; source credentials never enter the catalog. Other settings:
+`init` generates a random viewer token and creates `gateway/config.json` with mode 0600; it never overwrites an existing file. Edit every camera's `url` in that file. It also holds `lan_ip`, the shared viewer `token`, and output/resource settings. Copy its token into ESP32 provisioning. The file and its migration backups are excluded from Git and Docker build context. No per-camera secret files are required. The deployment script needs only Python 3.9+ and Docker Compose v2 with `--wait` support; no gateway Python dependencies are needed on the host.
+
+Remove the doorbell entry for a one-camera installation, or add entries in swipe order. Every ID must be unique and stable (`[a-z0-9_-]`, 1–32 chars). Names use 1–31 printable ASCII characters, rendered uppercase by the small firmware font. Required camera fields are `id`, `name`, `url`; source credentials never enter the catalog. Other settings:
 
 | Field | Default / range |
 |---|---|
@@ -45,7 +38,25 @@ Remove the doorbell entry for a one-camera installation, or add entries in swipe
 | `max_workers` | global 2; 1–8, limit counts starting and grace-period workers |
 | `max_clients` | global 8; 1–32 |
 
-Invalid configuration fails at startup. Edit files and `docker compose restart gateway` to reload. Transcode settings are fixed per stable camera ID, so all subscribers to that ID share identical output. Grace-period workers can be reclaimed early for a switch when the worker limit is reached. No adjacent prewarming occurs.
+Manage deployment using the same script (the script can be invoked by absolute path from any working directory):
+
+| Command (`python3 tools/deploy.py …`) | Behavior |
+|---|---|
+| `init --lan-ip ADDRESS` | create private config and random token, then edit URLs |
+| `check` | validate config/permissions/placeholders without Docker or printing secrets |
+| `up` | validate, build, recreate, and wait up to 90 seconds for service health |
+| `update` | rebuild/redeploy the current checkout; does not pull Git changes |
+| `restart` | validate and recreate with the current image to reload config |
+| `status` | show Compose service status |
+| `logs` | follow the last 100 log lines; Ctrl+C exits the viewer |
+| `down` | stop/remove this Compose deployment, preserving config and images |
+| `migrate --lan-ip ADDRESS` | import old token/URL files into config, preserving token and camera order |
+
+The script supplies Docker's `LAN_IP` from `lan_ip` in the config. On Linux it runs the container with the invoking user's UID/GID so the mode-0600 config remains readable. Use the same account for initialization and deployment. When deliberately run as root, initialization assigns the config and container to UID/GID 10001. The account needs Docker access. A failed build does not stop the old container; a failed health wait returns a nonzero exit code. Health checks validate service liveness, not camera playback.
+
+For deployment-specific device mappings or TLS mounts, pass `--override PATH` (repeatable) to each Docker action, for example `python3 tools/deploy.py up --override compose.hwa.yaml`. The script does not install Docker, change firewall rules, or automatically change hardware access.
+
+`restart` recreates so editor/atomic file replacements are remounted correctly. `down`, `status`, and `logs` work even if config is invalid or missing. To migrate an older installation, run `migrate`, then `up`; `config.json.legacy` and old secret files are retained, so remove those copies yourself only after verifying deployment. Transcode settings remain fixed per camera ID, and subscribers share identical output. Grace-period workers can be reclaimed for a switch when the worker limit is reached. No adjacent prewarming occurs.
 
 The image pins Python 3.12.8 and all Python dependencies; apt supplies the distribution security-maintained FFmpeg. Record the image ID and `ffmpeg -version` with each deployment, then preserve the built image for exact rollback. For byte-identical rebuilds, pin a tested base-image digest and Debian snapshot in your deployment; the public Dockerfile intentionally does not freeze OS security updates. Docker/ARM image build has not been run in this Windows environment.
 
@@ -56,16 +67,17 @@ Pi 5 has a hardware **HEVC decoder**, rather than the H.264 encode/decode blocks
 On the Pi, install Python 3 and FFmpeg/ffprobe (or run the probe in the same image used for deployment). Probe every offered source profile:
 
 ```sh
-python3 tools/probe.py --url-file /secure/front_low_url --output front-low.json
-python3 tools/probe.py --url-file /secure/front_medium_url --output front-medium.json
+python3 tools/probe.py --camera front --output front-low.json
+# To compare another source profile, edit that camera's URL in the same config.
+python3 tools/probe.py --camera front --output front-medium.json
 ```
 
-Reports contain codec, profile, dimensions, pixel format, frame rates, FFmpeg inventory and a real 30-frame decode → resize → JPEG test. URLs and FFmpeg error output are suppressed. Run as an account allowed to read those secret files. FFmpeg necessarily receives the source URL in its process arguments: restrict host process visibility and admin access accordingly.
+The probe reads `gateway/config.json` by default (override with `--config PATH`) and uses that camera's output settings. Reports contain codec, profile, dimensions, pixel format, frame rates, FFmpeg inventory and a real 30-frame decode → resize → JPEG test. URLs and FFmpeg error output are suppressed. Run as an account allowed to read the config. FFmpeg necessarily receives the source URL in its process arguments: restrict host process visibility and admin access accordingly.
 
 If the source is HEVC and the installed Pi-specific FFmpeg exposes a request-API decoder, test its **exact advertised name**, for example:
 
 ```sh
-python3 tools/probe.py --url-file /secure/front_low_url \
+python3 tools/probe.py --camera front \
   --decoder hevc_v4l2request --hw-download --output front-low-hwa.json
 ```
 
@@ -75,7 +87,7 @@ For an H.264 source, use the CPU baseline or an existing capable local transcode
 
 ## API and network security
 
-All endpoints except liveness require `Authorization: Bearer <viewer_token>`. Tokens persist in the mounted file across restarts; use at least 32 ASCII characters (example generates 64 hex characters). They never belong in query strings.
+All endpoints except liveness require `Authorization: Bearer <token>`. The token persists in the mounted configuration across restarts; use 32–128 printable ASCII characters without whitespace (`init` generates 64 hex characters). It never belongs in query strings.
 
 | Endpoint | Behavior |
 |---|---|
@@ -139,4 +151,4 @@ If the screen is blank, start with bring-up mode, vendor pin/init comparison, ba
 
 Gateway logs intentionally suppress raw FFmpeg stderr because it can reveal stream tokens; the probe reports success/failure without echoing secrets. An operator can run FFmpeg interactively on the Pi when needed, keeping its output private. Worker failures retry at 1–30 seconds plus jitter. Compose restarts the gateway process on failure; health checks report liveness without automatically restarting healthy processes just because a source is down.
 
-For updates, preserve a tagged built image (`docker image tag IMAGE_ID viewer-gateway:known-good`), configuration and local firmware export before rebuilding. Run tests and probes, `docker compose build`, then `docker compose up -d`. Roll back using a Compose override with `image: viewer-gateway:known-good` and `docker compose -f compose.yaml -f rollback.yaml up -d --no-build`; restore matching config if its schema changed. Firmware rollback uses the saved USB flash export. See `docs/benchmark.md` for acceptance and soak procedures.
+For updates, preserve a tagged built image (`docker image tag IMAGE_ID viewer-gateway:known-good`), configuration and local firmware export before rebuilding. After updating your checkout, run tests/probes and `python3 tools/deploy.py update`. Roll back using a Compose override with `image: viewer-gateway:known-good` and `pull_policy: never`, then `python3 tools/deploy.py restart --override rollback.yaml`; restore matching config if its schema changed. Firmware rollback uses the saved USB flash export. See `docs/benchmark.md` for acceptance and soak procedures.

@@ -9,6 +9,8 @@ import platform
 import subprocess
 import sys
 from pathlib import Path
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'gateway'))
+from config import load_config
 
 
 def run(args, timeout=30):
@@ -22,14 +24,21 @@ def run(args, timeout=30):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('--url-file', type=Path, required=True)
-    p.add_argument('--decoder', default='software', help='e.g. hevc_v4l2request, only if installed')
-    p.add_argument('--hw-download', action='store_true', help='download DRM/device frames before CPU filters')
+    p.add_argument('--config', type=Path, default=Path(__file__).resolve().parents[1]/'gateway/config.json')
+    p.add_argument('--camera', required=True, help='camera ID in the shared configuration')
+    p.add_argument('--decoder', help='override configured decoder, e.g. hevc_v4l2request')
+    p.add_argument('--hw-download', action=argparse.BooleanOptionalAction, default=None, help='download DRM/device frames before CPU filters')
     p.add_argument('--source-ca-file', type=Path)
     p.add_argument('--output', type=Path, default=Path('probe.json'))
     a = p.parse_args()
-    url = a.url_file.read_text().strip()
-    report = {'platform': platform.platform(), 'model': '', 'decoder_candidate': a.decoder}
+    cfg=load_config(a.config)
+    camera=next((dict(c) for c in cfg['cameras'] if c['id']==a.camera),None)
+    if camera is None: p.error('camera ID not found in configuration')
+    if a.decoder is not None: camera['decoder']=a.decoder
+    if a.hw_download is not None: camera['hw_download']=a.hw_download
+    if a.source_ca_file: camera['source_ca_file']=str(a.source_ca_file)
+    url = camera['url']
+    report = {'platform': platform.platform(), 'model': '', 'decoder_candidate': camera['decoder']}
     model = Path('/proc/device-tree/model')
     if model.exists(): report['model'] = model.read_text().strip('\0')
     for name, args in [('version',['-version']),('hwaccels',['-hwaccels']),
@@ -38,7 +47,7 @@ def main():
     probe_args=['ffprobe','-v','error','-rtsp_transport','tcp','-rw_timeout','5000000']
     if url.startswith('rtsps://'):
         probe_args+=['-tls_verify','1']
-        if a.source_ca_file: probe_args+=['-ca_file',str(a.source_ca_file)]
+        if camera.get('source_ca_file'): probe_args+=['-ca_file',camera['source_ca_file']]
     result = run(probe_args+[
                   '-select_streams','v:0','-show_entries',
                   'stream=codec_name,profile,width,height,pix_fmt,avg_frame_rate,r_frame_rate',
@@ -47,8 +56,6 @@ def main():
     if result.returncode == 0: report['source'] = json.loads(result.stdout)
     sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'gateway'))
     from media import command
-    camera = dict(fps=10,quality=5,mode='fit',rotation=0,decoder=a.decoder,hw_download=a.hw_download)
-    if a.source_ca_file: camera['source_ca_file']=str(a.source_ca_file)
     args = command(camera,url)
     args = args[:-1] + ['-frames:v','30','pipe:1']
     try:

@@ -1,50 +1,19 @@
 import asyncio
 import contextlib
 import hmac
-import json
 import logging
 import os
 import random
-import re
 import time
-from pathlib import Path
 
 from aiohttp import web
 from media import JPEGFrames, command
+from config import load_config
 
 LOG = logging.getLogger('gateway')
 CFG = web.AppKey('config', dict)
 WORKERS = web.AppKey('workers', dict)
 ADMISSION = web.AppKey('admission', asyncio.Lock)
-
-
-def load_config(path):
-    cfg = json.loads(Path(path).read_text())
-    cfg['token'] = Path(cfg['token_file']).read_text().strip()
-    if not 32 <= len(cfg['token']) <= 128 or not cfg['token'].isascii() or not cfg.get('cameras') or len(cfg['cameras']) > 16:
-        raise ValueError('token must have >=32 characters; configure 1..16 cameras')
-    ids = set()
-    for c in cfg['cameras']:
-        c.setdefault('fps', 10); c.setdefault('quality', 5)
-        c.setdefault('mode', 'fit'); c.setdefault('rotation', 0); c.setdefault('decoder', 'software')
-        c.setdefault('hw_download', False)
-        if not isinstance(c['hw_download'], bool): raise ValueError('hw_download must be boolean')
-        if not re.fullmatch(r'[a-z0-9_-]{1,32}', c['id']) or c['id'] in ids:
-            raise ValueError('invalid or duplicate camera ID')
-        ids.add(c['id'])
-        if type(c['fps']) is not int or type(c['quality']) is not int or not 5 <= c['fps'] <= 15 or not 2 <= c['quality'] <= 15 or c['mode'] not in ('fit', 'fill') or c['rotation'] not in (0,90,180,270):
-            raise ValueError('invalid output profile')
-        if not re.fullmatch(r'[a-zA-Z0-9_]{1,64}', c['decoder']):
-            raise ValueError('invalid decoder')
-        if not c['name'].isascii() or not 1 <= len(c['name']) <= 31:
-            raise ValueError('use 1..31 ASCII characters for display names')
-        c['url'] = Path(c['url_file']).read_text().strip()
-        if not c['url'].startswith(('rtsp://','rtsps://')) or '\n' in c['url']:
-            raise ValueError('expected RTSP(S) URL')
-    cfg.setdefault('idle_seconds', 5); cfg.setdefault('max_workers', 2); cfg.setdefault('max_clients', 8)
-    if not 0 <= cfg['idle_seconds'] <= 60 or not 1 <= cfg['max_workers'] <= 8 or not 1 <= cfg['max_clients'] <= 32:
-        raise ValueError('invalid resource limits')
-    return cfg
 
 
 class Worker:
@@ -173,7 +142,7 @@ async def bounded_write(response, request, data):
     finally:
         if not task.done():
             if request.transport: request.transport.abort()
-            with contextlib.suppress(ConnectionError): await task
+        with contextlib.suppress(ConnectionError, asyncio.CancelledError): await task
 
 
 async def stream(request):
