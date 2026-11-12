@@ -31,6 +31,8 @@ def load_config(path):
         c.setdefault('mode', 'fit'); c.setdefault('rotation', 0); c.setdefault('decoder', 'software')
         c.setdefault('hw_download', False)
         if not isinstance(c['hw_download'], bool): raise ValueError('hw_download must be boolean')
+        c.setdefault('source_tls_verify', True)
+        if not isinstance(c['source_tls_verify'], bool): raise ValueError('source_tls_verify must be boolean')
         camera_id = c.get('id')
         if not isinstance(camera_id, str) or not re.fullmatch(r'[a-z0-9_-]{1,32}', camera_id) or camera_id in ids:
             raise ValueError('invalid or duplicate camera ID')

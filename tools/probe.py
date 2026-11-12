@@ -72,6 +72,8 @@ def main(argv=None):
     p.add_argument('--decoder', help='override configured decoder, e.g. hevc_v4l2request')
     p.add_argument('--hw-download', action=argparse.BooleanOptionalAction, default=None, help='download DRM/device frames before CPU filters')
     p.add_argument('--source-ca-file', type=Path)
+    p.add_argument('--source-tls-verify', action=argparse.BooleanOptionalAction, default=None,
+                   help='verify the RTSPS source certificate (default: configured value, or True)')
     p.add_argument('--output', type=Path, default=Path('probe.json'))
     a = p.parse_args(argv)
     cfg=load_config(a.config)
@@ -80,6 +82,7 @@ def main(argv=None):
     if a.decoder is not None: camera['decoder']=a.decoder
     if a.hw_download is not None: camera['hw_download']=a.hw_download
     if a.source_ca_file: camera['source_ca_file']=str(a.source_ca_file)
+    if a.source_tls_verify is not None: camera['source_tls_verify']=a.source_tls_verify
     url = camera['url']
     report = {'platform': platform.platform(), 'model': '', 'decoder_candidate': camera['decoder'],
               'source_transport':url.split(':',1)[0]}
