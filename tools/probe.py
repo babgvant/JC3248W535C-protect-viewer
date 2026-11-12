@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'gateway'))
 from config import load_config
+from media import rtsp_input_options
 
 
 def run(args, timeout=30):
@@ -37,7 +38,7 @@ def diagnostic(result):
     elif any(s in text for s in ('unrecognized option','option not found','failed to set value','error setting option')) or ('option ' in text and ' not found' in text):
         category, message = 'unsupported_option', 'This FFmpeg build rejected a command option. Check its RTSP/TLS option support.'
         # Only report known flag names, never arbitrary strings from the source.
-        for flag in ('tls_verify','ca_file','rw_timeout','rtsp_transport'):
+        for flag in ('tls_verify','ca_file','rw_timeout','rtsp_transport','timeout'):
             if flag in text:
                 message = f'This FFmpeg build rejected the {flag} option. A compatible FFmpeg build is required.'
                 break
@@ -87,10 +88,7 @@ def main(argv=None):
     for name, args in [('version',['-version']),('hwaccels',['-hwaccels']),
                        ('decoders',['-decoders']),('encoders',['-encoders'])]:
         report[name] = run(['ffmpeg','-hide_banner']+args).stdout.decode(errors='replace')
-    probe_args=['ffprobe','-v','error','-rtsp_transport','tcp','-rw_timeout','5000000']
-    if url.startswith('rtsps://'):
-        probe_args+=['-tls_verify','1']
-        if camera.get('source_ca_file'): probe_args+=['-ca_file',camera['source_ca_file']]
+    probe_args=['ffprobe','-v','error']+rtsp_input_options(camera,url)
     result = run(probe_args+[
                   '-select_streams','v:0','-show_entries',
                   'stream=codec_name,profile,width,height,pix_fmt,avg_frame_rate,r_frame_rate',

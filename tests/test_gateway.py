@@ -4,7 +4,7 @@ import sys
 import unittest
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'gateway'))
-from media import JPEGFrames, MAX_FRAME, command
+from media import JPEGFrames, MAX_FRAME, command, rtsp_input_options
 from server import Worker, create_app, WORKERS
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -33,6 +33,17 @@ class FramingTests(unittest.TestCase):
         self.assertIn('rtsp://user:$(danger)@host/stream', args)
         self.assertIn('mjpeg', args); self.assertIn('yuvj420p', args)
         self.assertIn('transpose=2', args[args.index('-vf')+1])
+
+    def test_rtsp_socket_timeout_is_a_demuxer_option_before_input(self):
+        for url in ('rtsp://camera.invalid/live','rtsps://camera.invalid/live'):
+            args=command(CAM,url)
+            self.assertNotIn('-rw_timeout',args)
+            self.assertLess(args.index('-timeout'),args.index('-i'))
+            self.assertEqual(args[args.index('-timeout')+1],'5000000')
+            if url.startswith('rtsps:'):
+                self.assertEqual(args[args.index('-tls_verify')+1],'1')
+        self.assertEqual(rtsp_input_options(CAM,'rtsp://camera.invalid/live'),
+                         ['-rtsp_transport','tcp','-timeout','5000000'])
 
 
 class FakeProcess:

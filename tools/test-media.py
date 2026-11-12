@@ -13,6 +13,9 @@ binary=os.environ.get('FFMPEG')
 if not binary:
     import imageio_ffmpeg
     binary=imageio_ffmpeg.get_ffmpeg_exe()
+help_result=subprocess.run([binary,'-hide_banner','-h','demuxer=rtsp'],capture_output=True,text=True,timeout=10)
+assert help_result.returncode==0 and any(line.strip().startswith('-timeout ') for line in help_result.stdout.splitlines()), 'FFmpeg must support the RTSP demuxer timeout option'
+print('RTSP demuxer supports the configured socket timeout option')
 for mode in ('fit','fill'):
     for rotation in (0,90,180,270):
         camera=dict(fps=10,quality=5,mode=mode,rotation=rotation,decoder='software')

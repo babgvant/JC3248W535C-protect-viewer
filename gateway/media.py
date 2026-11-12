@@ -33,17 +33,24 @@ class JPEGFrames:
         return frames
 
 
-def command(camera, url):
-    # Decoder override is an administrator choice after tools/probe.py succeeds.
-    args = ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-nostdin',
-            '-threads', '2', '-rtsp_transport', 'tcp', '-rw_timeout', '5000000',
-            '-fflags', 'nobuffer', '-flags', 'low_delay']
-    if camera['decoder'] != 'software':
-        args += ['-c:v', camera['decoder']]
+def rtsp_input_options(camera, url):
+    # RTSP is a demuxer, rather than a URL protocol that consumes rw_timeout.
+    # Its socket I/O timeout is in microseconds in the supported FFmpeg builds.
+    args = ['-rtsp_transport', 'tcp', '-timeout', '5000000']
     if url.startswith('rtsps://'):
         args += ['-tls_verify', '1']
         if camera.get('source_ca_file'):
             args += ['-ca_file', camera['source_ca_file']]
+    return args
+
+
+def command(camera, url):
+    # Decoder override is an administrator choice after tools/probe.py succeeds.
+    args = ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-nostdin',
+            '-threads', '2'] + rtsp_input_options(camera, url) + [
+            '-fflags', 'nobuffer', '-flags', 'low_delay']
+    if camera['decoder'] != 'software':
+        args += ['-c:v', camera['decoder']]
     args += ['-i', url, '-map', '0:v:0', '-an', '-sn', '-dn']
     filters = []
     if camera.get('hw_download', False):
