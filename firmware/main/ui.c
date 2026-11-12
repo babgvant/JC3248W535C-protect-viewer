@@ -62,13 +62,13 @@ void ui_draw_gear(uint16_t *c,int lw) {
 
 static void button(uint16_t *c,int x,int y,int w,int h,const char *label,uint16_t fill) {
     overlay_rect(c,x,y,w,h,WHITE);overlay_rect(c,x+1,y+1,w-2,h-2,fill);
-    int tw=(int)strlen(label)*8-2;
-    overlay_text_cased(c,x+(w-tw)/2,y+(h-10)/2,label,WHITE,CYAN);
+    int tw=(int)strlen(label)*FONT_W;
+    overlay_text(c,x+(w-tw)/2,y+(h-FONT_H)/2,label,WHITE);
 }
 static void title(uint16_t *c,const char *left,const char *right) {
     overlay_rect(c,0,0,W,32,BAR);
-    overlay_text(c,8,11,left,WHITE);
-    if(right) overlay_text(c,W-8-(int)strlen(right)*8,11,right,YELLOW);
+    overlay_text(c,8,6,left,WHITE);
+    if(right) overlay_text(c,W-8-(int)strlen(right)*FONT_W,6,right,YELLOW);
 }
 static bool in(int x,int y,int bx,int by,int bw,int bh) {return x>=bx&&x<bx+bw&&y>=by&&y<by+bh;}
 
@@ -103,15 +103,15 @@ static void draw_main(uint16_t *c) {
     esp_netif_ip_info_t ip={0};
     esp_netif_t *netif=esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
     bool have_ip=netif&&esp_netif_get_ip_info(netif,&ip)==ESP_OK&&ip.ip.addr;
-    snprintf(line,sizeof line,"WIFI: %.40s",s.ssid);overlay_text_cased(c,12,46,line,WHITE,CYAN);
+    snprintf(line,sizeof line,"WIFI: %.36s",s.ssid);overlay_text(c,12,46,line,WHITE);
     if(assoc) snprintf(line,sizeof line,"STATUS: CONNECTED  RSSI %d",ap.rssi);
     else snprintf(line,sizeof line,"STATUS: NOT CONNECTED");
     overlay_text(c,12,76,line,assoc?0x07e0:YELLOW);
     if(have_ip) snprintf(line,sizeof line,"IP: " IPSTR,IP2STR(&ip.ip)); else snprintf(line,sizeof line,"IP: -");
     overlay_text(c,12,106,line,WHITE);
     if(have_ip) snprintf(line,sizeof line,"WEB: http://" IPSTR "/",IP2STR(&ip.ip)); else snprintf(line,sizeof line,"WEB: -");
-    overlay_text_cased(c,12,136,line,WHITE,CYAN);
-    snprintf(line,sizeof line,"ENCODER: %.30s:%u",s.host,(unsigned)s.port);overlay_text_cased(c,12,166,line,WHITE,CYAN);
+    overlay_text(c,12,136,line,WHITE);
+    snprintf(line,sizeof line,"ENCODER: %.26s:%u",s.host,(unsigned)s.port);overlay_text(c,12,166,line,WHITE);
     overlay_text(c,12,196,"SET ENCODER IP/PORT/KEY ON THE WEB PAGE",YELLOW);
     button(c,20,236,200,64,"SCAN WIFI",GREEN);
     button(c,260,236,200,64,"CLOSE",KEY);
@@ -119,32 +119,32 @@ static void draw_main(uint16_t *c) {
 static void draw_scan(uint16_t *c) {
     title(c,"WIFI NETWORKS","RESCAN");
     settings_t s;settings_get(&s);
-    if(scanning) overlay_text(c,150,140,"SCANNING...",WHITE);
-    else if(scan_failed) overlay_text(c,100,140,"SCAN FAILED - TAP RESCAN",YELLOW);
-    else if(!ap_count) overlay_text(c,150,140,"NONE FOUND",YELLOW);
+    if(scanning) overlay_text(c,190,140,"SCANNING...",WHITE);
+    else if(scan_failed) overlay_text(c,120,140,"SCAN FAILED - TAP RESCAN",YELLOW);
+    else if(!ap_count) overlay_text(c,190,140,"NONE FOUND",YELLOW);
     for(unsigned i=0;i<ROWS&&scroll+i<ap_count;i++) {
         const wifi_ap_record_t *ap=&aps[scroll+i];
         int y=36+40*i;
         bool current=!strcmp((const char *)ap->ssid,s.ssid);
         overlay_rect(c,0,y,W,38,current?GREEN:DARK);
         char line[48];
-        snprintf(line,sizeof line,"%.30s",(const char *)ap->ssid);overlay_text_cased(c,8,y+14,line,WHITE,CYAN);
-        snprintf(line,sizeof line,"%d",ap->rssi);overlay_text(c,350,y+14,line,WHITE);
-        overlay_text(c,410,y+14,ap->authmode==WIFI_AUTH_OPEN?"OPEN":"LOCK",ap->authmode==WIFI_AUTH_OPEN?YELLOW:WHITE);
+        snprintf(line,sizeof line,"%.28s",(const char *)ap->ssid);overlay_text(c,8,y+9,line,WHITE);
+        snprintf(line,sizeof line,"%d",ap->rssi);overlay_text(c,340,y+9,line,WHITE);
+        overlay_text(c,420,y+9,ap->authmode==WIFI_AUTH_OPEN?"OPEN":"LOCK",ap->authmode==WIFI_AUTH_OPEN?YELLOW:WHITE);
     }
     button(c,0,250,150,60,"UP",KEY);
     button(c,165,250,150,60,"DOWN",KEY);
     button(c,330,250,150,60,"BACK",KEY);
 }
 static void draw_pass(uint16_t *c) {
-    char line[64];snprintf(line,sizeof line,"JOIN %.34s",pick);
-    overlay_rect(c,0,0,W,32,BAR);overlay_text_cased(c,8,11,line,WHITE,CYAN);
-    overlay_text(c,W-8-48,11,"CANCEL",YELLOW);
+    char line[64];snprintf(line,sizeof line,"JOIN %.30s",pick);
+    overlay_rect(c,0,0,W,32,BAR);overlay_text(c,8,6,line,WHITE);
+    overlay_text(c,W-8-60,6,"CANCEL",YELLOW);
     overlay_rect(c,4,38,W-8,32,WHITE);overlay_rect(c,5,39,W-10,30,BLACK);
     char shown[66];snprintf(shown,sizeof shown,"%s_",pass);
     // Show the tail when longer than the box.
-    size_t n=strlen(shown);const char *p=n>56?shown+(n-56):shown;
-    overlay_text_cased(c,10,48,p,WHITE,CYAN);
+    size_t n=strlen(shown);const char *p=n>44?shown+(n-44):shown;
+    overlay_text(c,10,44,p,WHITE);
     int page=symbols?2:shift?1:0;
     for(int r=0;r<4;r++) for(int k=0;pages[page][r][k];k++) {
         char s[2]={pages[page][r][k],0};

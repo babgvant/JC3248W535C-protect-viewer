@@ -307,7 +307,7 @@ static void touch_task(void *arg) {
                 strcpy(status,"CONNECTING");selected_at=now;
             } else if(abs(x-sx)<15&&abs(y-sy)<15&&now-start<500000) {
                 int lw=portrait?320:480,lh=portrait?480:320;
-                if(!VIEWER_BRINGUP_ONLY&&ui_gear_hit(sx,sy,lw)) open_ui=true;
+                if(!VIEWER_BRINGUP_ONLY&&controls&&ui_gear_hit(sx,sy,lw)) open_ui=true;
                 else if(controls&&sy>lh-60) {
                     if(sx<lw/3) brightness=brightness>20?brightness-20:10;
                     else if(sx<2*lw/3) brightness=brightness<80?brightness+20:100;
@@ -373,21 +373,27 @@ static void render_task(void *arg) {
             char text[64];
             bool portrait=s.count&&cameras[s.selected].portrait; overlay_set_portrait(portrait);
             int lw=portrait?320:480,lh=portrait?480:320;
-            overlay_rect(canvas,0,0,lw,32,0);
-            snprintf(text,sizeof text,"%s %s",s.count?cameras[s.selected].name:"VIEWER",label);
-            overlay_text(canvas,6,4,text,0xffff);
-            if(!VIEWER_BRINGUP_ONLY) ui_draw_gear(canvas,lw);
+            // Default view is clean video. The title bar (name/status + gear) shows with the diag overlay,
+            // or whenever there is no live picture so problems stay visible.
+            bool bar=show||video_gen!=s.generation;
+            if(bar) {
+                overlay_rect(canvas,0,0,lw,32,0);
+                snprintf(text,sizeof text,"%s %s",s.count?cameras[s.selected].name:"VIEWER",label);
+                overlay_text(canvas,6,6,text,0xffff);
+            }
+            if(show&&!VIEWER_BRINGUP_ONLY) ui_draw_gear(canvas,lw);
             if(video_gen==s.generation && now-last>1000000) {
+                int sy=bar?32:0;
                 snprintf(text,sizeof text,"STALE %lld S",(now-last)/1000000);
-                overlay_rect(canvas,0,32,lw,20,0xf800);overlay_text(canvas,6,36,text,0xffff);
+                overlay_rect(canvas,0,sy,lw,24,0xf800);overlay_text(canvas,6,sy+2,text,0xffff);
             }
             if(show) {
                 overlay_rect(canvas,0,lh-65,lw,65,0);
                 wifi_ap_record_t ap; int rssi=esp_wifi_sta_get_ap_info(&ap)==ESP_OK?ap.rssi:0;
                 snprintf(text,sizeof text,"RSSI %d HEAP %u",rssi,(unsigned)esp_get_free_heap_size());
-                overlay_text(canvas,6,lh-60,text,0xffff);
-                if(portrait) overlay_text(canvas,6,lh-30,"DIM    BRIGHT    NEXT",0xffff);
-                else overlay_text(canvas,6,lh-30,"DIM          BRIGHT         NEXT",0xffff);
+                overlay_text(canvas,6,lh-62,text,0xffff);
+                static const char *labels[3]={"DIM","BRIGHT","NEXT"};
+                for(int k=0;k<3;k++) overlay_text(canvas,lw*(2*k+1)/6-(int)strlen(labels[k])*FONT_W/2,lh-28,labels[k],0xffff);
             }
             }
             // Recheck immediately before handing pixels to the sole display owner.
