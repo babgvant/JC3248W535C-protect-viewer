@@ -2,7 +2,7 @@
 
 ESP-IDF firmware for a Guition JC3248W535C and an on-demand FFmpeg MJPEG gateway for a Raspberry Pi 5 (4 GB). Viewing needs Wi-Fi, the LAN gateway and the local camera source. Home Assistant, cloud services, audio, recording, talkback and automation are outside this release.
 
-**Validation status:** firmware builds on ESP-IDF 5.5.2; host parser/switching tests and gateway lifecycle tests pass. Real FFmpeg synthetic tests verify all eight fit/fill and rotation combinations. No board, camera credentials or Pi shell was supplied: LCD/touch operation, actual Protect streams, Pi acceleration, latency, power and a 24-hour soak remain unmeasured. The included binary uses placeholder provisioning. Do not flash it expecting a configured viewer.
+**Validation status:** firmware builds on ESP-IDF 6.1; host parser/switching tests and gateway lifecycle tests pass. Real FFmpeg synthetic tests verify all eight fit/fill and rotation combinations. No board, camera credentials or Pi shell was supplied: LCD/touch operation, actual Protect streams, Pi acceleration, latency, power and a 24-hour soak remain unmeasured. The included binary uses placeholder provisioning. Do not flash it expecting a configured viewer.
 
 ## Pi deployment
 
@@ -115,7 +115,7 @@ Guition's [model listing](https://www.guition.com/model-selection) identifies JC
 
 The configured map is CS 45, clock 47, D0/D1/D2/D3 21/48/40/39, backlight 1; touch SDA/SCL 4/8, address 0x3B, polled with no interrupt. No LCD reset pin is assigned. Compare `firmware/main/board.h` with the schematic's IO distribution and the vendor demo's `esp_bsp.h` **before connecting this firmware**. Confirm octal PSRAM and flash identification using boot logs/esptool. The selected Espressif [AXS15231B 2.1.1 driver](https://components.espressif.com/components/espressif/esp_lcd_axs15231b/versions/2.1.1/readme) includes LCD/touch support and a default vendor initialization table; an actual module revision may require a different table. See `docs/architecture.md` for the driver's unusual QSPI sequential-strip behavior.
 
-Install **ESP-IDF v5.5.2**, including ESP32-S3 toolchains. Use an IDF terminal:
+Install **ESP-IDF v6.1**, including ESP32-S3 toolchains. Use an IDF terminal:
 
 ```sh
 cp firmware/main/provision.example.h firmware/main/provision.h

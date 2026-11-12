@@ -1,6 +1,6 @@
 # Acceptance procedure and report
 
-Everything below is a target or test procedure until the report table is filled with observed results. Local checks completed on Windows on 2026-11-12: ESP-IDF 5.5.2 compile/link; host C parser/selection/JPEG-profile tests; 12 Python gateway tests (including real child reaping, slow/fast viewers, simultaneous admission, idle shutdown, source stall, cancellation before task entry and rapid subscription changes); real FFmpeg synthetic output tests across fit/fill × four rotations. Synthetic test frames were about 8–13 KB; this does not predict camera bandwidth. Docker ARM build, physical flash, live Protect ingest and hardware acceleration remain untested.
+Everything below is a target or test procedure until the report table is filled with observed results. Local checks completed on Windows on 2026-11-12: ESP-IDF 6.1 compile/link; host C parser/selection/JPEG-profile tests; 12 Python gateway tests (including real child reaping, slow/fast viewers, simultaneous admission, idle shutdown, source stall, cancellation before task entry and rapid subscription changes); real FFmpeg synthetic output tests across fit/fill × four rotations. Synthetic test frames were about 8–13 KB; this does not predict camera bandwidth. Docker ARM build, physical flash, live Protect ingest and hardware acceleration remain untested.
 
 ## First hardware session
 
