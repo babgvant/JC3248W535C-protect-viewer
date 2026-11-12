@@ -98,9 +98,19 @@ class Prerequisites:
         if probe_command([docker, name, 'version']).returncode:
             raise SetupError(f'Docker {name} plugin is still unavailable after installation')
 
+    def daemon_available(self, argv):
+        result = probe_command(argv)
+        if result.returncode: return False
+        try: info = json.loads(result.stdout)
+        except (ValueError, TypeError): return False
+        # Formatted `docker info` can exit successfully with client-only/error
+        # data. Require actual server evidence, not just a successful CLI exit.
+        return (isinstance(info, dict) and isinstance(info.get('ServerVersion'), str)
+                and bool(info['ServerVersion'].strip()) and not info.get('ServerErrors'))
+
     def docker_access(self, docker):
-        info = [docker, 'info', '--format', '{{.ServerVersion}}']
-        if probe_command(info).returncode == 0: return [docker]
+        info = [docker, 'info', '--format', '{{json .}}']
+        if self.daemon_available(info): return [docker]
         endpoint = os.environ.get('DOCKER_HOST')
         if not endpoint:
             context = probe_command([docker, 'context', 'inspect', '--format', '{{.Endpoints.docker.Host}}'])
@@ -117,12 +127,17 @@ class Prerequisites:
         if probe_command([systemctl, 'is-active', '--quiet', 'docker.service']).returncode:
             print('Starting the local Docker service.', flush=True)
             self.run_admin([systemctl, 'enable', '--now', 'docker.service'])
-        if probe_command(info).returncode == 0: return [docker]
+        if self.daemon_available(info): return [docker]
         # Existing login sessions need not be restarted or added to a privileged group.
         elevated = self.privileged(info)
         print('Checking local Docker access through sudo (no logout required).', flush=True)
-        result = subprocess.run(elevated, stdout=subprocess.DEVNULL, check=False)
-        if result.returncode: raise SetupError('local Docker daemon is still inaccessible; inspect sudo docker info and systemctl status docker')
+        prefix = elevated[:-len(info)]
+        if prefix:
+            # Authenticate interactively before capturing the server check output.
+            if subprocess.run(prefix + ['-v'], check=False).returncode:
+                raise SetupError('sudo authentication failed; rerun and enter your sudo password')
+        if not self.daemon_available(elevated):
+            raise SetupError('local Docker daemon is still inaccessible; inspect sudo docker info and systemctl status docker')
         return self.privileged([docker])
 
     def ensure(self, install=True):

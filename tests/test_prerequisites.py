@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 import deploy
 
 
-def result(code=0, stdout=''):
+def result(code=0, stdout='{"ServerVersion":"26.1.5"}'):
     return subprocess.CompletedProcess([], code, stdout=stdout, stderr='')
 
 
@@ -73,13 +73,13 @@ class PrerequisiteTests(unittest.TestCase):
 
     def test_sudo_access_does_not_change_group_membership(self):
         def probe(argv):
-            if 'info' in argv: return result(1)
+            if 'info' in argv: return result(0 if argv[0]=='/usr/bin/sudo' else 1)
             if 'context' in argv: return result(stdout='unix:///var/run/docker.sock\n')
             if 'show' in argv: return result(stdout='loaded\n')
             return result()
         with patch.dict(deploy.os.environ, {'DOCKER_HOST':''}), patch.object(deploy, 'find_tool', side_effect=lambda name: '/usr/bin/'+name), patch.object(deploy, 'probe_command', side_effect=probe), patch.object(deploy.Prerequisites, 'privileged', side_effect=lambda argv: ['/usr/bin/sudo']+argv), patch.object(deploy.subprocess, 'run', return_value=result()) as run:
             self.assertEqual(deploy.Prerequisites().docker_access('/usr/bin/docker'), ['/usr/bin/sudo','/usr/bin/docker'])
-            self.assertIn('info', run.call_args.args[0])
+            self.assertEqual(run.call_args.args[0], ['/usr/bin/sudo','-v'])
             self.assertNotIn('usermod', str(run.call_args))
 
     def test_remote_context_failure_does_not_install_or_start_local_engine(self):
@@ -174,6 +174,38 @@ class PrerequisiteTests(unittest.TestCase):
             self.assertEqual(deploy.Prerequisites().ensure(), ['/usr/bin/docker'])
             self.assertEqual([call.args[0][-1] for call in run.call_args_list],
                              ['docker-cli','docker-compose','docker-buildx','docker.io'])
+
+    def test_client_only_docker_info_zero_exit_is_not_daemon_access(self):
+        for output in ('', '<no value>', '{}', 'null',
+                       '{"ServerVersion":"","ServerErrors":["permission denied"]}',
+                       '{"ServerVersion":"26.1.5","ServerErrors":["permission denied"]}'):
+            with self.subTest(output=output), patch.object(deploy, 'probe_command', return_value=result(stdout=output)):
+                self.assertFalse(deploy.Prerequisites().daemon_available(['docker','info']))
+
+    def test_permission_failure_with_zero_exit_selects_sudo_for_compose(self):
+        def probe(argv):
+            if 'info' in argv:
+                if argv[0]=='sudo': return result()
+                return result(stdout='{"ServerErrors":["permission denied"],"ServerVersion":""}')
+            if 'context' in argv: return result(stdout='unix:///var/run/docker.sock')
+            if 'show' in argv: return result(stdout='loaded')
+            return result()
+        with patch.dict(deploy.os.environ, {'DOCKER_HOST':''}), patch.object(deploy, 'find_tool', side_effect=lambda name:'/usr/bin/'+name), patch.object(deploy,'probe_command',side_effect=probe), patch.object(deploy.Prerequisites,'privileged',side_effect=lambda argv:['sudo']+argv), patch.object(deploy.subprocess,'run',return_value=result()):
+            runtime=deploy.Prerequisites().docker_access('/usr/bin/docker')
+            args=deploy.docker_invocation(['docker','compose','up'],runtime,
+                                         dict(LAN_IP='10.10.4.220',VIEWER_UID='1000',VIEWER_GID='1000'))
+            self.assertEqual(args[:2],['sudo','env'])
+            self.assertEqual(args[-3:],['/usr/bin/docker','compose','up'])
+
+    def test_sudo_client_only_success_does_not_claim_ready(self):
+        def probe(argv):
+            if 'info' in argv: return result(stdout='{}')
+            if 'context' in argv: return result(stdout='unix:///var/run/docker.sock')
+            if 'show' in argv: return result(stdout='loaded')
+            return result()
+        with patch.dict(deploy.os.environ, {'DOCKER_HOST':''}), patch.object(deploy,'find_tool',side_effect=lambda name:'/usr/bin/'+name), patch.object(deploy,'probe_command',side_effect=probe), patch.object(deploy.Prerequisites,'privileged',side_effect=lambda argv:['sudo']+argv), patch.object(deploy.subprocess,'run',return_value=result()):
+            with self.assertRaisesRegex(deploy.SetupError,'still inaccessible'):
+                deploy.Prerequisites().docker_access('docker')
 
 
 if __name__ == '__main__': unittest.main()
