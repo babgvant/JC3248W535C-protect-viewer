@@ -32,7 +32,7 @@ class PrerequisiteTests(unittest.TestCase):
         def install(choices): tools['docker'] = '/usr/bin/docker'
         with patch.object(deploy, 'find_tool', side_effect=lambda name: tools.get(name)), patch.object(deploy, 'probe_command', return_value=result()), patch.object(deploy.Prerequisites, 'install', side_effect=install) as install_mock:
             deploy.Prerequisites().ensure()
-            self.assertEqual(install_mock.call_args_list, [unittest.mock.call(['docker-ce','docker.io'])])
+            self.assertEqual(install_mock.call_args_list, [unittest.mock.call(['docker-ce-cli','docker-cli','docker.io'])])
             self.assertEqual(tools['ffmpeg'], '/usr/local/bin/ffmpeg')
 
     def test_only_missing_ffmpeg_package_is_installed(self):
@@ -129,6 +129,51 @@ class PrerequisiteTests(unittest.TestCase):
         with patch.dict(deploy.os.environ, {'DOCKER_HOST':''}), patch.object(deploy, 'find_tool', side_effect=lambda name: '/usr/bin/'+name), patch.object(deploy, 'probe_command', side_effect=probe), patch.object(deploy.Prerequisites, 'install', side_effect=install) as install_mock:
             self.assertEqual(deploy.Prerequisites().docker_access('docker'), ['docker'])
             install_mock.assert_called_once_with(['docker-ce','docker.io'])
+
+    def test_debian13_daemon_only_installs_separate_cli_and_can_rerun(self):
+        # Reproduce the screenshot: docker.io succeeded but --no-install-recommends
+        # omitted docker-cli. Exercise real package selection, not a mocked install.
+        cli_present = False
+        def find(name):
+            if name == 'docker' and not cli_present: return None
+            return '/usr/bin/' + name
+        def probe(argv):
+            if 'policy' in argv:
+                return result(stdout='Candidate: 26.1.5+dfsg1-9+deb13u1' if argv[-1]=='docker-cli' else 'Candidate: (none)')
+            return result()
+        def admin(argv):
+            nonlocal cli_present
+            if 'install' in argv:
+                self.assertEqual(argv[-1], 'docker-cli')
+                cli_present = True
+        with patch.object(deploy, 'find_tool', side_effect=find), patch.object(deploy, 'probe_command', side_effect=probe), patch.object(deploy.Prerequisites, 'apt_update'), patch.object(deploy.Prerequisites, 'run_admin', side_effect=admin) as run:
+            setup = deploy.Prerequisites()
+            self.assertEqual(setup.ensure(), ['/usr/bin/docker'])
+            self.assertEqual(setup.ensure(), ['/usr/bin/docker'])
+            self.assertEqual(run.call_count, 1)
+
+    def test_fresh_debian13_installs_cli_plugins_and_engine_separately(self):
+        installed = {'ffmpeg','ffprobe'}
+        packages = {'docker-cli':'docker', 'docker-compose':'compose',
+                    'docker-buildx':'buildx', 'docker.io':'dockerd'}
+        def find(name):
+            if name in ('docker','dockerd') and name not in installed: return None
+            return '/usr/bin/' + name
+        def probe(argv):
+            if 'policy' in argv:
+                return result(stdout='Candidate: 2.26.1-4' if argv[-1] in packages else 'Candidate: (none)')
+            if 'info' in argv: return result(0 if 'dockerd' in installed else 1)
+            if 'context' in argv: return result(stdout='unix:///var/run/docker.sock')
+            if 'show' in argv: return result(stdout='not-found')
+            if len(argv)>1 and argv[1] in ('compose','buildx'):
+                return result(0 if argv[1] in installed else 1)
+            return result()
+        def admin(argv):
+            if 'install' in argv: installed.add(packages[argv[-1]])
+        with patch.dict(deploy.os.environ, {'DOCKER_HOST':''}), patch.object(deploy, 'find_tool', side_effect=find), patch.object(deploy, 'probe_command', side_effect=probe), patch.object(deploy.Prerequisites, 'apt_update'), patch.object(deploy.Prerequisites, 'run_admin', side_effect=admin) as run:
+            self.assertEqual(deploy.Prerequisites().ensure(), ['/usr/bin/docker'])
+            self.assertEqual([call.args[0][-1] for call in run.call_args_list],
+                             ['docker-cli','docker-compose','docker-buildx','docker.io'])
 
 
 if __name__ == '__main__': unittest.main()

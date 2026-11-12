@@ -130,7 +130,10 @@ class Prerequisites:
             docker = find_tool('docker')
             if not docker: raise SetupError('Docker is missing; run python3 tools/deploy.py setup or up')
             return self.docker_access(docker)
-        docker = self.ensure_tool('docker', ['docker-ce', 'docker.io'])
+        # Debian 13 splits docker.io (daemon) from docker-cli (a recommendation).
+        # Install the CLI explicitly; docker_access separately ensures a local
+        # engine only when required. Older Debian can fall back to bundled docker.io.
+        docker = self.ensure_tool('docker', ['docker-ce-cli', 'docker-cli', 'docker.io'])
         self.ensure_plugin(docker, 'compose', ['docker-compose-plugin', 'docker-compose-v2', 'docker-compose'])
         self.ensure_plugin(docker, 'buildx', ['docker-buildx-plugin', 'docker-buildx'])
         self.ensure_tool('ffmpeg', ['ffmpeg'], '-version')
