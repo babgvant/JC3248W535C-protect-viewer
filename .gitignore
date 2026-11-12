@@ -10,3 +10,4 @@ firmware/build/
 firmware/managed_components/
 firmware/main/provision.h
 artifacts/
+*.FCBak
