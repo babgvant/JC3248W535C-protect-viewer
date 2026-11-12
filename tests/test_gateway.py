@@ -41,6 +41,15 @@ class FramingTests(unittest.TestCase):
         vf = command(dict(CAM, orientation='portrait'), 'rtsp://x/y')
         self.assertIn('pad=320:480', vf[vf.index('-vf')+1])
 
+    def test_drm_is_an_input_option_with_automatic_cpu_frame_transfer(self):
+        args = command(dict(CAM, decoder='hevc', hwaccel='drm', hw_download=False), CAM['url'])
+        self.assertLess(args.index('-hwaccel'), args.index('-i'))
+        self.assertEqual(args[args.index('-hwaccel')+1], 'drm')
+        self.assertEqual(args[args.index('-c:v')+1], 'hevc')
+        self.assertNotIn('hwdownload', args[args.index('-vf')+1])
+        self.assertEqual(args[args.index('-c:v', args.index('-i'))+1], 'mjpeg')
+        self.assertNotIn('-hwaccel', command(CAM, CAM['url']))
+
     def test_rtsp_socket_timeout_is_a_demuxer_option_before_input(self):
         for url in ('rtsp://camera.invalid/live','rtsps://camera.invalid/live'):
             args=command(CAM,url)

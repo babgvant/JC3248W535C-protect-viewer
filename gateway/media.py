@@ -54,6 +54,8 @@ def command(camera, url):
     args = ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-nostdin',
             '-threads', '2'] + rtsp_input_options(camera, url) + [
             '-fflags', 'nobuffer', '-flags', 'low_delay']
+    if camera.get('hwaccel', 'none') != 'none':
+        args += ['-hwaccel', camera['hwaccel']]
     if camera['decoder'] != 'software':
         args += ['-c:v', camera['decoder']]
     args += ['-i', url, '-map', '0:v:0', '-an', '-sn', '-dn']

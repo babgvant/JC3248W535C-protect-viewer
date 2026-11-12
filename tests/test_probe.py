@@ -65,5 +65,35 @@ class ProbeDiagnosticTests(unittest.TestCase):
             self.assertNotIn('private-token',output.read_text()+console.getvalue())
             self.assertNotIn('private-host',output.read_text()+console.getvalue())
 
+    def test_drm_probe_confirms_hardware_without_exposing_verbose_sdp(self):
+        cfg={'cameras':[dict(id='doorbell',url='rtsp://private-host/private-token',decoder='software',
+                            fps=10,quality=5,mode='fit',rotation=0)]}
+        for marker in (b'Hwaccel V4L2 HEVC stateless V4', b''):
+            commands=[]
+            def run(args,timeout=30):
+                commands.append(args)
+                if args[0] == 'ffprobe':
+                    return subprocess.CompletedProcess([],0,stdout=b'{"streams":[{"codec_name":"hevc"}]}',stderr=b'')
+                if '-frames:v' in args:
+                    return subprocess.CompletedProcess([],0,stdout=b'\xff\xd8test\xff\xd9'*30,
+                        stderr=marker+b'\na=crypto:1 inline:private-key\nprivate-token')
+                return subprocess.CompletedProcess([],0,stdout=b'inventory',stderr=b'')
+            with tempfile.TemporaryDirectory() as directory:
+                output=Path(directory)/'report.json'; console=io.StringIO()
+                with patch.object(probe,'load_config',return_value=cfg),patch.object(probe,'run',side_effect=run),contextlib.redirect_stdout(console):
+                    code=probe.main(['--camera','doorbell','--decoder','hevc','--hwaccel','drm',
+                                     '--no-hw-download','--output',str(output)])
+                report=json.loads(output.read_text())
+                self.assertEqual(code,0 if marker else 1)
+                self.assertEqual(report['hardware_decode_confirmed'],bool(marker))
+                self.assertEqual(report['hwaccel'],'drm')
+                self.assertEqual(report['frames'],30)
+                pipeline=next(c for c in commands if '-frames:v' in c)
+                self.assertLess(pipeline.index('-hwaccel'),pipeline.index('-i'))
+                self.assertEqual(pipeline[pipeline.index('-hwaccel')+1],'drm')
+                self.assertNotIn('hwdownload',pipeline[pipeline.index('-vf')+1])
+                for secret in ('private-key','private-token','a=crypto'):
+                    self.assertNotIn(secret,output.read_text()+console.getvalue())
+
 
 if __name__=='__main__': unittest.main()

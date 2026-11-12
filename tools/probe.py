@@ -38,7 +38,7 @@ def diagnostic(result):
     elif any(s in text for s in ('unrecognized option','option not found','failed to set value','error setting option')) or ('option ' in text and ' not found' in text):
         category, message = 'unsupported_option', 'This FFmpeg build rejected a command option. Check its RTSP/TLS option support.'
         # Only report known flag names, never arbitrary strings from the source.
-        for flag in ('tls_verify','ca_file','rw_timeout','rtsp_transport','timeout'):
+        for flag in ('tls_verify','ca_file','rw_timeout','rtsp_transport','timeout','hwaccel'):
             if flag in text:
                 message = f'This FFmpeg build rejected the {flag} option. A compatible FFmpeg build is required.'
                 break
@@ -70,6 +70,7 @@ def main(argv=None):
     p.add_argument('--config', type=Path, default=Path(__file__).resolve().parents[1]/'gateway/config.json')
     p.add_argument('--camera', required=True, help='camera ID in the shared configuration')
     p.add_argument('--decoder', help='override configured decoder, e.g. hevc_v4l2request')
+    p.add_argument('--hwaccel', choices=('none', 'drm'), help='override hardware acceleration')
     p.add_argument('--hw-download', action=argparse.BooleanOptionalAction, default=None, help='download DRM/device frames before CPU filters')
     p.add_argument('--source-ca-file', type=Path)
     p.add_argument('--source-tls-verify', action=argparse.BooleanOptionalAction, default=None,
@@ -80,11 +81,13 @@ def main(argv=None):
     camera=next((dict(c) for c in cfg['cameras'] if c['id']==a.camera),None)
     if camera is None: p.error('camera ID not found in configuration')
     if a.decoder is not None: camera['decoder']=a.decoder
+    if a.hwaccel is not None: camera['hwaccel']=a.hwaccel
     if a.hw_download is not None: camera['hw_download']=a.hw_download
     if a.source_ca_file: camera['source_ca_file']=str(a.source_ca_file)
     if a.source_tls_verify is not None: camera['source_tls_verify']=a.source_tls_verify
     url = camera['url']
     report = {'platform': platform.platform(), 'model': '', 'decoder_candidate': camera['decoder'],
+              'hwaccel':camera.get('hwaccel', 'none'),
               'source_transport':url.split(':',1)[0]}
     model = Path('/proc/device-tree/model')
     if model.exists(): report['model'] = model.read_text().strip('\0')
@@ -109,13 +112,22 @@ def main(argv=None):
     sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'gateway'))
     from media import command
     args = command(camera,url)
+    if camera.get('hwaccel') == 'drm':
+        # Inspect a fixed driver marker only; never publish verbose SDP/crypto keys.
+        args[args.index('-loglevel')+1] = 'verbose'
     args = args[:-1] + ['-frames:v','30','pipe:1']
     try:
         result = run(args,30)
         report['pipeline_diagnostic'] = diagnostic(result)
+        if camera.get('hwaccel') == 'drm':
+            report['hardware_decode_confirmed'] = b'Hwaccel V4L2 HEVC stateless' in (result.stderr or b'')
         from media import JPEGFrames
         frames = JPEGFrames().feed(result.stdout)
         report['pipeline_ok'] = result.returncode == 0 and len(frames) == 30
+        if camera.get('hwaccel') == 'drm' and report['pipeline_ok'] and not report['hardware_decode_confirmed']:
+            report['pipeline_ok'] = False
+            report['pipeline_diagnostic'] = {'category':'hardware_unconfirmed',
+                'message':'JPEG output succeeded, but the Raspberry Pi V4L2 HEVC hardware marker was absent.'}
         report['frames'] = len(frames)
         report['bytes'] = len(result.stdout)
     except ValueError:

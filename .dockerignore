@@ -1,0 +1,12 @@
+# Allow only the sources needed by gateway/Dockerfile.rpi into its root context.
+*
+!gateway/
+gateway/*
+!gateway/Dockerfile.rpi
+!gateway/requirements.txt
+!gateway/config.py
+!gateway/media.py
+!gateway/server.py
+!tools/
+tools/*
+!tools/probe.py

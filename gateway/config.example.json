@@ -5,7 +5,7 @@
   "max_workers": 2,
   "max_clients": 8,
   "cameras": [
-    {"id": "front", "name": "Front", "url": "rtsps://PROTECT_HOST:7441/FRONT_STREAM_TOKEN", "fps": 10, "quality": 5, "mode": "fit", "rotation": 0, "decoder": "software"},
-    {"id": "doorbell", "name": "Doorbell", "url": "rtsps://PROTECT_HOST:7441/DOORBELL_STREAM_TOKEN", "fps": 10, "quality": 5, "mode": "fill", "orientation": "portrait", "rotation": 0, "decoder": "software"}
+    {"id": "front", "name": "Front", "url": "rtsps://PROTECT_HOST:7441/FRONT_STREAM_TOKEN", "fps": 10, "quality": 5, "mode": "fit", "rotation": 0, "decoder": "software", "hwaccel": "none"},
+    {"id": "doorbell", "name": "Doorbell", "url": "rtsps://PROTECT_HOST:7441/DOORBELL_STREAM_TOKEN", "fps": 10, "quality": 5, "mode": "fill", "orientation": "portrait", "rotation": 0, "decoder": "software", "hwaccel": "none"}
   ]
 }

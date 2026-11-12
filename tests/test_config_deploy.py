@@ -69,6 +69,18 @@ class ConfigDeploymentTests(unittest.TestCase):
         self.assertNotEqual(cfg['token'], self.cfg['token'])
         if os.name == 'posix': self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
 
+    def test_hwaccel_defaults_and_validation(self):
+        self.write()
+        self.assertEqual(load_config(self.path)['cameras'][0]['hwaccel'], 'none')
+        self.cfg['cameras'][0].update(decoder='hevc', hwaccel='drm')
+        self.write()
+        self.assertEqual(load_config(self.path)['cameras'][0]['hwaccel'], 'drm')
+        for invalid in ('auto', '', None, True, ['drm']):
+            self.cfg['cameras'][0]['hwaccel'] = invalid
+            self.write()
+            with self.assertRaisesRegex(ValueError, 'hwaccel'):
+                load_config(self.path)
+
     def test_migration_preserves_urls_token_and_original(self):
         secret_dir = self.path.parent / 'secrets'; secret_dir.mkdir()
         old = copy.deepcopy(self.cfg)
