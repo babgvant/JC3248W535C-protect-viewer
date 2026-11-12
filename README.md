@@ -6,7 +6,7 @@ ESP-IDF firmware for a Guition JC3248W535C and an on-demand FFmpeg MJPEG gateway
 
 ## Pi deployment
 
-Use a 64-bit Linux installation and Docker Compose v2. Commands below run from the project root **on the Pi**. No existing Protect/Frigate/HA configuration is modified by this project.
+Use a 64-bit Linux installation with Python 3.9+. Commands below run from the project root **on the Pi**. `up` detects and installs missing host prerequisites through the existing apt repositories, using sudo when necessary. No existing Protect/Frigate/HA configuration is modified by this project.
 
 1. Inspect the Pi with `sh tools/pi-inventory.sh > pi-inventory.txt`. Record OS, cooling, existing workload, FFmpeg build, devices and available decoders.
 2. In Protect's per-camera settings, enable its local RTSP/RTSPS output (look for Share Livestream / Secure RTSPS Output; older versions group profiles under Advanced). Copy each offered low/medium/high URL exactly. Treat the entire URL as a password. Do not infer codec from the URL or blindly rewrite RTSPS ports. Start with the lowest profile, then probe and compare quality. Doorbell main and package cameras may be separate streams.
@@ -21,7 +21,7 @@ python3 tools/deploy.py up
 python3 tools/deploy.py status
 ```
 
-`init` generates a random viewer token and creates `gateway/config.json` with mode 0600; it never overwrites an existing file. Edit every camera's `url` in that file. It also holds `lan_ip`, the shared viewer `token`, and output/resource settings. Copy its token into ESP32 provisioning. The file and its migration backups are excluded from Git and Docker build context. No per-camera secret files are required. The deployment script needs only Python 3.9+ and Docker Compose v2 with `--wait` support; no gateway Python dependencies are needed on the host.
+`init` generates a random viewer token and creates `gateway/config.json` with mode 0600; it never overwrites an existing file. Edit every camera's `url` in that file. It also holds `lan_ip`, the shared viewer `token`, and output/resource settings. Copy its token into ESP32 provisioning. The file and its migration backups are excluded from Git and Docker build context. No per-camera secret files are required. The deployment script itself uses Python's standard library; no gateway Python dependencies are needed on the host.
 
 Remove the doorbell entry for a one-camera installation, or add entries in swipe order. Every ID must be unique and stable (`[a-z0-9_-]`, 1–32 chars). Names use 1–31 printable ASCII characters, rendered uppercase by the small firmware font. Required camera fields are `id`, `name`, `url`; source credentials never enter the catalog. Other settings:
 
@@ -44,7 +44,8 @@ Manage deployment using the same script (the script can be invoked by absolute p
 |---|---|
 | `init --lan-ip ADDRESS` | create private config and random token, then edit URLs |
 | `check` | validate config/permissions/placeholders without Docker or printing secrets |
-| `up` | validate, build, recreate, and wait up to 90 seconds for service health |
+| `setup` | detect/install missing Docker, Compose, Buildx, FFmpeg and ffprobe; start/check Docker, without requiring config |
+| `up` | validate, prepare prerequisites, build, recreate, and wait up to 90 seconds for service health |
 | `update` | rebuild/redeploy the current checkout; does not pull Git changes |
 | `restart` | validate and recreate with the current image to reload config |
 | `status` | show Compose service status |
@@ -52,9 +53,13 @@ Manage deployment using the same script (the script can be invoked by absolute p
 | `down` | stop/remove this Compose deployment, preserving config and images |
 | `migrate --lan-ip ADDRESS` | import old token/URL files into config, preserving token and camera order |
 
-The script supplies Docker's `LAN_IP` from `lan_ip` in the config. On Linux it runs the container with the invoking user's UID/GID so the mode-0600 config remains readable. Use the same account for initialization and deployment. When deliberately run as root, initialization assigns the config and container to UID/GID 10001. The account needs Docker access. A failed build does not stop the old container; a failed health wait returns a nonzero exit code. Health checks validate service liveness, not camera playback.
+The script supplies Docker's `LAN_IP` from `lan_ip` in the config. On Linux it runs the container with the invoking user's UID/GID so the mode-0600 config remains readable. Use the same account for initialization and deployment. When deliberately run as root, initialization assigns the config and container to UID/GID 10001. If your login cannot access the local Docker socket, the script invokes Docker through sudo while preserving your runtime UID/GID. No logout or permanent Docker-group change is needed. A failed build does not stop the old container; a failed health wait returns a nonzero exit code. Health checks validate service liveness, not camera playback.
 
-For deployment-specific device mappings or TLS mounts, pass `--override PATH` (repeatable) to each Docker action, for example `python3 tools/deploy.py up --override compose.hwa.yaml`. The script does not install Docker, change firewall rules, or automatically change hardware access.
+Prerequisite preparation runs automatically for `up`, `update`, and `restart`, or separately with `python3 tools/deploy.py setup`. Working executables and plugins are reused, including your existing Raspberry Pi FFmpeg build. Apt runs only for missing components; it is instructed not to upgrade installed packages or remove conflicting packages. Missing host FFmpeg/ffprobe are installed for inventory/probing; the container still supplies its own FFmpeg. The script starts the local Docker service if stopped and installs an engine if only a local CLI exists. Remote/rootless contexts are preserved; connection failures there report an error rather than installing a local replacement. `status`, `logs`, and `down` do not install packages.
+
+Automatic package installation supports Debian/Raspberry Pi OS/Ubuntu with apt and compatible configured repositories. On your Debian 13 Pi, distro packages `docker.io`, `docker-compose` (v2), and `docker-buildx` are available; where Docker CE repositories are already configured, their packages are preferred. The script does not replace apt sources, run a downloaded installer, remove an existing container stack, or replace a broken existing executable. Package/service errors stop deployment with a retryable explanation. Package operations may request your sudo password, retry downloads, and wait up to 120 seconds for dpkg locks.
+
+For deployment-specific device mappings or TLS mounts, pass `--override PATH` (repeatable) to each Docker action, for example `python3 tools/deploy.py up --override compose.hwa.yaml`. The script does not change firewall rules or automatically change hardware access.
 
 `restart` recreates so editor/atomic file replacements are remounted correctly. `down`, `status`, and `logs` work even if config is invalid or missing. To migrate an older installation, run `migrate`, then `up`; `config.json.legacy` and old secret files are retained, so remove those copies yourself only after verifying deployment. Transcode settings remain fixed per camera ID, and subscribers share identical output. Grace-period workers can be reclaimed for a switch when the worker limit is reached. No adjacent prewarming occurs.
 

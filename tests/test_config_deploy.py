@@ -18,6 +18,10 @@ import deploy
 
 class ConfigDeploymentTests(unittest.TestCase):
     def setUp(self):
+        # Deployment dispatch tests isolate host setup; it has its own tests below.
+        prerequisite_patch = patch.object(deploy.Prerequisites, 'ensure', return_value=['docker'])
+        self.prerequisites = prerequisite_patch.start()
+        self.addCleanup(prerequisite_patch.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -88,6 +92,7 @@ class ConfigDeploymentTests(unittest.TestCase):
         command = run.call_args.args[0]
         self.assertIn('--wait', command); self.assertIn('--force-recreate', command)
         env = run.call_args.kwargs['env']
+        self.prerequisites.assert_called_once_with(install=True)
         self.assertEqual(env['LAN_IP'], self.cfg['lan_ip'])
         self.assertNotIn(self.cfg['token'], str(run.call_args))
         self.assertNotIn('rtsp://', str(run.call_args))
@@ -147,6 +152,20 @@ class ConfigDeploymentTests(unittest.TestCase):
         with patch.object(deploy, 'load_config', side_effect=IsADirectoryError()), contextlib.redirect_stderr(stderr):
             self.assertEqual(deploy.main(['check']), 1)
         self.assertIn('found a directory', stderr.getvalue())
+
+    def test_setup_does_not_require_config(self):
+        with patch.object(deploy, 'ROOT', self.root):
+            self.assertEqual(deploy.main(['setup']), 0)
+        self.prerequisites.assert_called_once_with()
+        self.assertFalse(self.path.exists())
+
+    def test_prerequisite_failure_prevents_compose(self):
+        self.write()
+        self.prerequisites.side_effect = deploy.SetupError('package installation failed')
+        with patch.object(deploy, 'ROOT', self.root), patch.object(deploy.subprocess, 'run') as run, contextlib.redirect_stderr(io.StringIO()) as errors:
+            self.assertEqual(deploy.main(['up']), 1)
+            run.assert_not_called()
+        self.assertIn('package installation failed', errors.getvalue())
 
 
 if __name__ == '__main__': unittest.main()
