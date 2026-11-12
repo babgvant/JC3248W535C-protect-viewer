@@ -122,5 +122,31 @@ class ConfigDeploymentTests(unittest.TestCase):
         self.assertIn(str(override.resolve()), args)
         self.assertIn('--no-build', args)
 
+    def test_missing_docker_is_distinguished_from_missing_config(self):
+        self.write()
+        stderr = io.StringIO()
+        with patch.object(deploy, 'ROOT', self.root), patch.object(deploy.subprocess, 'run', side_effect=FileNotFoundError()), contextlib.redirect_stderr(stderr):
+            self.assertEqual(deploy.main(['up']), 1)
+        self.assertIn('Docker executable not found', stderr.getvalue())
+        self.assertNotIn(self.cfg['token'], stderr.getvalue())
+        self.path.unlink()
+        stderr = io.StringIO()
+        with patch.object(deploy, 'ROOT', self.root), contextlib.redirect_stderr(stderr):
+            self.assertEqual(deploy.main(['check']), 1)
+        self.assertIn('gateway/config.json was not found', stderr.getvalue())
+
+    def test_config_permission_error_identifies_operation(self):
+        stderr = io.StringIO()
+        with patch.object(deploy, 'load_config', side_effect=PermissionError('sensitive contents')), contextlib.redirect_stderr(stderr):
+            self.assertEqual(deploy.main(['check']), 1)
+        self.assertIn('permission denied while reading gateway/config.json', stderr.getvalue())
+        self.assertNotIn('sensitive contents', stderr.getvalue())
+
+    def test_config_directory_is_reported(self):
+        stderr = io.StringIO()
+        with patch.object(deploy, 'load_config', side_effect=IsADirectoryError()), contextlib.redirect_stderr(stderr):
+            self.assertEqual(deploy.main(['check']), 1)
+        self.assertIn('found a directory', stderr.getvalue())
+
 
 if __name__ == '__main__': unittest.main()

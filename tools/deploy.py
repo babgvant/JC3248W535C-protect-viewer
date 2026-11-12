@@ -91,6 +91,7 @@ def main(argv=None):
     parser.add_argument('--override', type=Path, action='append', default=[], help='additional Compose file, repeatable')
     args = parser.parse_args(argv)
     path = ROOT / 'gateway/config.json'
+    operation = {'init': 'creating configuration', 'migrate': 'migrating configuration'}.get(args.action, 'reading gateway/config.json')
     try:
         if args.action == 'init': initialize(path, args.lan_ip); return 0
         if args.action == 'migrate': migrate(path, args.lan_ip); return 0
@@ -113,6 +114,7 @@ def main(argv=None):
         gid = os.getgid() if hasattr(os, 'getgid') else 10001
         env['VIEWER_UID'] = str(uid or 10001)
         env['VIEWER_GID'] = str(gid if uid else 10001)
+        operation = 'starting Docker Compose'
         result = subprocess.run(compose_command(args.action, args.override), cwd=ROOT, env=env, check=False)
         if result.returncode:
             print('Docker operation failed. Inspect status/logs; existing configuration was preserved.', file=sys.stderr)
@@ -120,9 +122,34 @@ def main(argv=None):
     except ValueError as error:
         print(f'Deployment failed: {error}', file=sys.stderr)
         return 1
-    except (OSError, KeyError, TypeError):
-        # Avoid tracebacks that might echo malformed secret input.
-        print('Deployment failed: check config format, required fields, private permissions, Docker access, and existing backup/temp files.', file=sys.stderr)
+    except FileNotFoundError:
+        if operation == 'starting Docker Compose':
+            message = 'Docker executable not found in PATH. Run docker --version and docker compose version on the Pi; Docker Engine and the Compose plugin must be installed and accessible.'
+        elif operation == 'reading gateway/config.json':
+            message = 'gateway/config.json was not found. Run python3 tools/deploy.py init --lan-ip YOUR_PI_LAN_IP, then edit the camera URLs.'
+        else:
+            message = f'a required file is missing while {operation}. For migration, confirm the original secret files still exist.'
+        print(f'Deployment failed: {message}', file=sys.stderr)
+        return 1
+    except PermissionError:
+        if operation == 'starting Docker Compose':
+            message = 'permission denied executing Docker. Check the Docker executable permissions. Docker daemon access errors are reported separately by Docker itself.'
+        else:
+            message = f'permission denied while {operation}. Check ls -l gateway/config.json and use the account that owns the configuration; its permissions should be 600.'
+        print(f'Deployment failed: {message}', file=sys.stderr)
+        return 1
+    except IsADirectoryError:
+        print('Deployment failed: expected a configuration/secret file but found a directory. Check gateway/config.json and any legacy secret paths.', file=sys.stderr)
+        return 1
+    except FileExistsError:
+        print('Deployment failed: a configuration, migration backup, or temporary file already exists. Existing files were preserved; inspect them before retrying.', file=sys.stderr)
+        return 1
+    except OSError as error:
+        # Report the operation and errno, never exception text or secret contents.
+        print(f'Deployment failed: OS error {error.errno} while {operation}. Check filesystem access and Docker availability.', file=sys.stderr)
+        return 1
+    except (KeyError, TypeError):
+        print('Deployment failed: a configuration field is missing or has the wrong type. Compare the structure with gateway/config.example.json; do not share stream URLs or tokens.', file=sys.stderr)
         return 1
     except KeyboardInterrupt:
         return 130
