@@ -207,5 +207,14 @@ class PrerequisiteTests(unittest.TestCase):
             with self.assertRaisesRegex(deploy.SetupError,'still inaccessible'):
                 deploy.Prerequisites().docker_access('docker')
 
+    def test_unsupported_memory_limits_warn_once_without_failing_health(self):
+        errors = io.StringIO()
+        with patch.object(deploy,'probe_command',return_value=result(stdout='{"ServerVersion":"26.1.5","MemoryLimit":false}')), contextlib.redirect_stderr(errors):
+            setup=deploy.Prerequisites()
+            self.assertTrue(setup.daemon_available(['docker','info']))
+            self.assertTrue(setup.daemon_available(['docker','info']))
+        self.assertEqual(errors.getvalue().count('WARNING:'),1)
+        self.assertIn('cannot be enforced',errors.getvalue())
+
 
 if __name__ == '__main__': unittest.main()

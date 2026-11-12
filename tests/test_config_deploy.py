@@ -126,6 +126,8 @@ class ConfigDeploymentTests(unittest.TestCase):
         args = deploy.compose_command('restart', [override])
         self.assertIn(str(override.resolve()), args)
         self.assertIn('--no-build', args)
+        self.assertEqual(args[args.index('--ansi')+1], 'never')
+        self.assertEqual(args[args.index('--progress')+1], 'plain')
 
     def test_missing_docker_is_distinguished_from_missing_config(self):
         self.write()

@@ -138,6 +138,21 @@ USB recovery: use a data cable; hold BOOT, press/release RESET, release BOOT, th
 
 ## Tests, troubleshooting, updates
 
+### Docker memory limits on the Pi
+
+If Docker reports `Your kernel does not support memory limit capabilities`, the configured 768 MiB limit is discarded. A healthy gateway can still serve requests, but its container memory ceiling is not enforced. The deployment script reports this separately from service health. Status, builds and deployment use plain Compose progress to avoid repeated terminal redraws over SSH.
+
+Inspect the current host before choosing a boot/kernel fix:
+
+```sh
+cat /proc/cmdline
+cat /proc/cgroups
+cat /sys/fs/cgroup/cgroup.controllers
+sudo docker info --format '{{json .}}'
+```
+
+On cgroup v2, `memory` should be present in `cgroup.controllers`. Raspberry Pi kernels/images may disable it at boot; the correct fix depends on active boot configuration and kernel support. The Raspberry Pi kernel maintainers discuss this in [issue 6980](https://github.com/raspberrypi/linux/issues/6980). Inspect the active command line for `cgroup_disable=memory` as well as enable flags. Preserve your boot files before any edit, keep the command line on a single line, and plan a reboot if boot parameters must change. The deployment script reports capability status; it does not edit boot files or reboot the Pi automatically. After correction/reboot, verify Docker reports `MemoryLimit: true` and run `python3 tools/deploy.py restart` to recreate the container with its memory limit enforced.
+
 ```sh
 python3 -m venv .venv
 . .venv/bin/activate

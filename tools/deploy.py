@@ -40,6 +40,7 @@ def probe_command(argv):
 class Prerequisites:
     def __init__(self):
         self.updated = False
+        self.warned_memory = False
 
     def privileged(self, argv):
         if hasattr(os, 'geteuid') and os.geteuid() == 0: return argv
@@ -105,8 +106,14 @@ class Prerequisites:
         except (ValueError, TypeError): return False
         # Formatted `docker info` can exit successfully with client-only/error
         # data. Require actual server evidence, not just a successful CLI exit.
-        return (isinstance(info, dict) and isinstance(info.get('ServerVersion'), str)
-                and bool(info['ServerVersion'].strip()) and not info.get('ServerErrors'))
+        available = (isinstance(info, dict) and isinstance(info.get('ServerVersion'), str)
+                     and bool(info['ServerVersion'].strip()) and not info.get('ServerErrors'))
+        if available and info.get('MemoryLimit') is False and not self.warned_memory:
+            print('WARNING: Docker memory cgroups are unavailable; the configured 768 MiB limit cannot be enforced. '
+                  'The gateway can run, but memory isolation is inactive. See README: Docker memory limits on the Pi.',
+                  file=sys.stderr, flush=True)
+            self.warned_memory = True
+        return available
 
     def docker_access(self, docker):
         info = [docker, 'info', '--format', '{{json .}}']
@@ -239,7 +246,8 @@ def compose_command(action, overrides=()):
         'status': ['ps'],
         'logs': ['logs', '--tail', '100', '--follow', 'gateway'],
     }
-    base = ['docker', 'compose', '--project-directory', str(ROOT), '-f', str(ROOT / 'compose.yaml')]
+    base = ['docker', 'compose', '--ansi', 'never', '--progress', 'plain',
+            '--project-directory', str(ROOT), '-f', str(ROOT / 'compose.yaml')]
     for override in overrides: base += ['-f', str(override.resolve())]
     return base + commands[action]
 
