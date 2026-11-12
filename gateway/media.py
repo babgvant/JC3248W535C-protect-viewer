@@ -38,9 +38,14 @@ def rtsp_input_options(camera, url):
     # Its socket I/O timeout is in microseconds in the supported FFmpeg builds.
     args = ['-rtsp_transport', 'tcp', '-timeout', '5000000']
     if url.startswith('rtsps://'):
-        args += ['-tls_verify', '0' if camera.get('source_tls_verify') is False else '1']
-        if camera.get('source_ca_file'):
-            args += ['-ca_file', camera['source_ca_file']]
+        # Some FFmpeg builds reject the -tls_verify option outright regardless of
+        # its value, so a disabled check must omit the flag rather than send 0.
+        if camera.get('source_tls_verify') is False:
+            pass
+        else:
+            args += ['-tls_verify', '1']
+            if camera.get('source_ca_file'):
+                args += ['-ca_file', camera['source_ca_file']]
     return args
 
 
