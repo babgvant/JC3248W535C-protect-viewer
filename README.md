@@ -139,6 +139,108 @@ This supports CPU decoding of either H.264 or HEVC. After changing a camera prof
 
 For an H.264 source, use the CPU baseline or an existing capable local transcode service. Compare a low H.264 profile on CPU against a larger HEVC profile using hardware decode: a larger source plus frame transfer can cost more overall. JPEG encoding and scaling here still use CPU. Choose the lowest-cost source that resolves useful detail at the panel resolution. Measure CPU/memory/temperature; those are proxies, not watts.
 
+### Verify and troubleshoot the running container
+
+Run these commands on the Pi from the project directory. Replace `doorbell` with the configured camera ID when testing another camera. These checks do not rebuild or restart the gateway or change `config.json`. Probes open a separate short camera connection and write redacted reports under the container's `/tmp`.
+
+Check service status and recent errors first:
+
+```sh
+python3 tools/deploy.py status
+docker compose logs --tail 100 gateway
+```
+
+The container can be `healthy` while a camera is unavailable: the health check tests the HTTP server, not camera playback. A memory-cgroup warning means Docker cannot enforce the memory limit; it does not establish a decoder failure.
+
+Run the probe and print its result together, using the running container's installed code and mounted camera settings, with no decoder overrides:
+
+```sh
+docker compose exec -T gateway python - <<'PY'
+import json
+from pathlib import Path
+import probe
+
+report = Path("/tmp/doorbell-check.json")
+status = probe.main([
+    "--config", "/config/config.json",
+    "--camera", "doorbell",
+    "--output", str(report),
+])
+r = json.loads(report.read_text())
+for key in ("decoder_candidate", "hwaccel", "hardware_decode_confirmed",
+            "pipeline_ok", "frames", "source_diagnostic", "pipeline_diagnostic"):
+    print(f"{key}: {r.get(key)}")
+raise SystemExit(status)
+PY
+```
+
+For hardware HEVC decoding, expect `decoder_candidate: hevc`, `hwaccel: drm`, `hardware_decode_confirmed: True`, `pipeline_ok: True`, and `frames: 30`, with both diagnostics reporting `category: ok`. This confirms hardware use for the new probe session inside the running container. `hardware_unconfirmed` means JPEG output succeeded without the expected hardware marker; do not treat it as a hardware pass.
+
+If `/tmp/doorbell-check.json` was missing when reading it separately, run the combined command above and inspect its output. The report exists only after the probe writes it; recreating the container also clears `/tmp`. A traceback such as a missing `/app/probe.py` indicates that the running image needs updating, rather than a hardware decoding result.
+
+To inspect the actual viewer worker, first open the doorbell on the display, then run:
+
+```sh
+docker compose exec -T gateway python - <<'PY'
+from pathlib import Path
+
+found = False
+for path in Path("/proc").glob("[0-9]*/cmdline"):
+    try:
+        args = path.read_bytes().split(b"\0")
+    except OSError:
+        continue
+    if args and args[0].rsplit(b"/", 1)[-1] == b"ffmpeg":
+        found = True
+        print(f"FFmpeg PID {path.parent.name}")
+        for flag in (b"-hwaccel", b"-c:v"):
+            if flag in args:
+                i = args.index(flag)
+                print(f"  {flag.decode()} {args[i+1].decode()}")
+if not found:
+    print("No FFmpeg worker found; keep a camera open on the viewer and retry.")
+PY
+```
+
+Expect `-hwaccel drm` and `-c:v hevc`. Process arguments confirm the worker requested hardware decoding; the probe's hardware marker confirms that the driver was actually used in its test session. Idle cameras have no worker. The command deliberately prints only the decoder flags, keeping source URLs out of the output.
+
+If the probe fails, inspect the running container's build, device nodes and permissions:
+
+```sh
+docker compose exec -T gateway sh -c '
+  id
+  ls -l /dev/video19 /dev/media1
+  ffmpeg -version
+  ffmpeg -hide_banner -hwaccels
+  ffmpeg -hide_banner -h decoder=hevc
+'
+```
+
+Expect group `44`, both device nodes, `--enable-v4l2-request` in the FFmpeg build, and `drm` in the HEVC decoder's supported hardware devices. A generic `drm` entry in `-hwaccels` alone is insufficient. The old Debian 5.1.9 container lacked DRM support in its HEVC decoder and lacked device access; configuring `hevc`/`drm` could not enable acceleration there.
+
+For comparison, test software decoding in the same running container without changing its saved settings:
+
+```sh
+docker compose exec -T gateway python /app/probe.py \
+  --config /config/config.json --camera doorbell \
+  --decoder software --hwaccel none --no-hw-download \
+  --output /tmp/doorbell-software.json
+```
+
+A software pass with a DRM failure points toward hardware support, device permissions or frame handling. If both fail, inspect `source_diagnostic` and `pipeline_diagnostic` for TLS, authorization, connectivity or filter errors. Reports are redacted; avoid sharing raw verbose FFmpeg logs, which can contain stream URLs and SDP crypto keys. To inspect host support for comparison:
+
+```sh
+id
+ls -l /dev/video19 /dev/media1
+ffmpeg -version
+ffmpeg -hide_banner -h decoder=hevc
+if command -v v4l2-ctl >/dev/null 2>&1; then
+  v4l2-ctl --list-devices
+fi
+```
+
+After an image/code update, deploy with `python3 tools/deploy.py up`. For settings-only changes, use `python3 tools/deploy.py check` followed by `python3 tools/deploy.py restart`. Repeat the active-config probe afterward. Software mode and hardware mode use the same image; no hardware Compose override is required.
+
 ## API and network security
 
 All endpoints except liveness require `Authorization: Bearer <token>`. The token persists in the mounted configuration across restarts; use 32–128 printable ASCII characters without whitespace (`init` generates 64 hex characters). It never belongs in query strings.
