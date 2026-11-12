@@ -77,7 +77,7 @@ python3 tools/probe.py --camera front --output front-low.json
 python3 tools/probe.py --camera front --output front-medium.json
 ```
 
-The probe reads `gateway/config.json` by default (override with `--config PATH`) and uses that camera's output settings. Reports contain codec, profile, dimensions, pixel format, frame rates, FFmpeg inventory and a real 30-frame decode → resize → JPEG test. URLs and FFmpeg error output are suppressed. Run as an account allowed to read the config. FFmpeg necessarily receives the source URL in its process arguments: restrict host process visibility and admin access accordingly.
+The probe reads `gateway/config.json` by default (override with `--config PATH`) and uses that camera's output settings. Reports contain codec, profile, dimensions, pixel format, frame rates, FFmpeg inventory and a real 30-frame decode → resize → JPEG test. Failed stages include `source_diagnostic` / `pipeline_diagnostic` categories, return codes, and fixed safe explanations for unsupported options, TLS verification, authorization, network and decoder/filter failures. Raw FFmpeg stderr and source URLs are never copied into the report or console. Run as an account allowed to read the config. FFmpeg necessarily receives the source URL in its process arguments: restrict host process visibility and admin access accordingly.
 
 If the source is HEVC and the installed Pi-specific FFmpeg exposes a request-API decoder, test its **exact advertised name**, for example:
 
