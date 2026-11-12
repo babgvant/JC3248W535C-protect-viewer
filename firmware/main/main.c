@@ -26,6 +26,9 @@
 #include "font.h"
 #include "multipart.h"
 #include "viewer_state.h"
+#include "settings.h"
+#include "ui.h"
+#include "web.h"
 #if __has_include("provision.h")
 #include "provision.h"
 #else
@@ -35,7 +38,9 @@
 #define PIXELS (320*480)
 typedef struct {char id[33],name[32];bool portrait;} camera_t;
 typedef struct {uint8_t *data; size_t len; uint32_t gen; int64_t received;} frame_t;
-static camera_t cameras[16];
+static camera_t cameras[16];      // shown cameras, in display order
+static camera_t all_cams[16];     // full gateway catalog
+static unsigned all_count;
 static viewer_state_t state={.generation=1};
 static SemaphoreHandle_t mutex;
 static QueueHandle_t free_frames,ready;
@@ -64,13 +69,13 @@ static esp_err_t http_event(esp_http_client_event_t *e) {
     return ESP_OK;
 }
 static esp_http_client_handle_t client(const char *path,int timeout, char *content_type) {
-    char url[256],auth[160];
-    if(snprintf(url,sizeof url,"%s%s",VIEWER_GATEWAY,path)>=(int)sizeof url) return NULL;
+    char url[256],auth[160]; settings_t s; settings_get(&s);
+    if(snprintf(url,sizeof url,"%s://%s:%u%s",s.https?"https":"http",s.host,(unsigned)s.port,path)>=(int)sizeof url) return NULL;
     esp_http_client_config_t cfg={.url=url,.timeout_ms=timeout,.buffer_size=4096,
         .disable_auto_redirect=true,.cert_pem=VIEWER_CA_PEM,.event_handler=http_event,.user_data=content_type,
         .crt_bundle_attach=VIEWER_CA_PEM?NULL:esp_crt_bundle_attach};
     esp_http_client_handle_t h=esp_http_client_init(&cfg);
-    if(h) {snprintf(auth,sizeof auth,"Bearer %s",VIEWER_TOKEN); esp_http_client_set_header(h,"Authorization",auth);}
+    if(h) {snprintf(auth,sizeof auth,"Bearer %s",s.token); esp_http_client_set_header(h,"Authorization",auth);}
     return h;
 }
 static const char *wifi_reason_name(int r) {
@@ -91,13 +96,13 @@ static void wifi_diag_scan(void) {
     wifi_ap_record_t recs[20]; uint16_t n=sizeof recs/sizeof recs[0], total=0;
     esp_wifi_scan_get_ap_num(&total);
     if(esp_wifi_scan_get_ap_records(&n,recs)!=ESP_OK) n=0;
-    bool seen=false;
+    bool seen=false; settings_t cs; settings_get(&cs);
     ESP_LOGI("wifi_diag","scan: %u APs visible (showing %u strongest-first as reported)",total,n);
     for(int i=0;i<n;i++) {
-        bool target=!strcmp((const char *)recs[i].ssid,VIEWER_SSID); seen|=target;
+        bool target=!strcmp((const char *)recs[i].ssid,cs.ssid); seen|=target;
         ESP_LOGI("wifi_diag","  %-32s rssi=%d ch=%d auth=%d%s",(const char *)recs[i].ssid,recs[i].rssi,recs[i].primary,recs[i].authmode,target?"  <== target":"");
     }
-    if(!seen) ESP_LOGW("wifi_diag","target SSID \"%s\" NOT seen in scan",VIEWER_SSID);
+    if(!seen) ESP_LOGW("wifi_diag","target SSID \"%s\" NOT seen in scan",cs.ssid);
 }
 static void event(void *a,esp_event_base_t base,int32_t id,void *data) {
     if(base==WIFI_EVENT && id==WIFI_EVENT_STA_START) esp_wifi_connect();
@@ -111,6 +116,59 @@ static void event(void *a,esp_event_base_t base,int32_t id,void *data) {
         unlock();
     }
 }
+// Called after the user picks a network on the device.
+static void apply_wifi(void) {
+    settings_t s; settings_get(&s);
+    wifi_config_t c={0};
+    memcpy(c.sta.ssid,s.ssid,strnlen(s.ssid,sizeof c.sta.ssid));
+    memcpy(c.sta.password,s.pass,strnlen(s.pass,sizeof c.sta.password));
+    esp_wifi_set_config(WIFI_IF_STA,&c);
+    lock(); wifi_retry_at=0; wifi_backoff=500; unlock();
+    esp_wifi_disconnect();
+}
+// Called after encoder IP/port/key change on the web page: reload the camera list from the new gateway.
+static void apply_gateway(void) {
+    lock(); state.count=0; state.selected=0; all_count=0; state.generation++; snprintf(status,sizeof status,"LOADING CAMERAS"); unlock();
+}
+// Rebuild the shown list from the full catalog and the saved selection (comma separated ids, display order).
+static void rebuild_cameras(void) {
+    char pref[544]; settings_get_cams(pref,sizeof pref);
+    lock();
+    char keep[33]=""; if(state.count) snprintf(keep,sizeof keep,"%s",cameras[state.selected].id);
+    camera_t out[16]; unsigned n=0;
+    for(const char *p=pref;*p;) {
+        size_t l=strcspn(p,",");
+        for(unsigned i=0;i<all_count;i++) {
+            if(strlen(all_cams[i].id)!=l||strncmp(all_cams[i].id,p,l)) continue;
+            bool dup=false; for(unsigned k=0;k<n;k++) dup|=!strcmp(out[k].id,all_cams[i].id);
+            if(!dup) out[n++]=all_cams[i];
+        }
+        p+=l; if(*p==',') p++;
+    }
+    if(!n) {memcpy(out,all_cams,sizeof out);n=all_count;} // nothing selected or nothing matches: show everything
+    memcpy(cameras,out,sizeof out);
+    state.count=n; state.selected=0;
+    for(unsigned i=0;i<n;i++) if(!strcmp(cameras[i].id,keep)) state.selected=i;
+    state.generation++; snprintf(status,sizeof status,"CONNECTING");
+    unlock();
+}
+static int list_cameras(web_cam_t *o,int max) {
+    int n=0; lock();
+    for(unsigned i=0;i<state.count&&n<max;i++,n++) {
+        memcpy(o[n].id,cameras[i].id,sizeof o[n].id);memcpy(o[n].name,cameras[i].name,sizeof o[n].name);o[n].enabled=true;
+    }
+    for(unsigned i=0;i<all_count&&n<max;i++) {
+        bool shown=false; for(unsigned k=0;k<state.count;k++) shown|=!strcmp(cameras[k].id,all_cams[i].id);
+        if(shown) continue;
+        memcpy(o[n].id,all_cams[i].id,sizeof o[n].id);memcpy(o[n].name,all_cams[i].name,sizeof o[n].name);o[n].enabled=false;n++;
+    }
+    unlock(); return n;
+}
+static void apply_cameras(const char ids[][33],int n) {
+    char csv[544]=""; size_t used=0;
+    for(int i=0;i<n;i++) used+=snprintf(csv+used,sizeof csv-used,"%s%s",i?",":"",ids[i]);
+    if(used<sizeof csv) {settings_set_cams(csv);rebuild_cameras();}
+}
 static bool catalog(void) {
     esp_http_client_handle_t h=client("/v1/cameras",2000,NULL); if(!h) return false;
     char body[4096]; int used=0,n; bool ok=false;
@@ -119,22 +177,25 @@ static bool catalog(void) {
         body[used]=0;
         cJSON *root=cJSON_Parse(body),*list=cJSON_GetObjectItem(root,"cameras");
         unsigned count=cJSON_GetArraySize(list);
+        static camera_t parsed[16];
         if(cJSON_IsArray(list)&&count>0&&count<=16) {
             ok=true;
             for(unsigned i=0;i<count;i++) {
                 cJSON *c=cJSON_GetArrayItem(list,i),*id=cJSON_GetObjectItem(c,"id"),*name=cJSON_GetObjectItem(c,"name");
                 if(!cJSON_IsString(id)||!cJSON_IsString(name)||strlen(id->valuestring)>32||!strlen(id->valuestring)||strlen(name->valuestring)>31) {ok=false;break;}
                 if(strspn(id->valuestring,"abcdefghijklmnopqrstuvwxyz0123456789_-")!=strlen(id->valuestring)) {ok=false;break;}
-                snprintf(cameras[i].id,sizeof cameras[i].id,"%s",id->valuestring);
-                snprintf(cameras[i].name,sizeof cameras[i].name,"%s",name->valuestring);
+                snprintf(parsed[i].id,sizeof parsed[i].id,"%s",id->valuestring);
+                snprintf(parsed[i].name,sizeof parsed[i].name,"%s",name->valuestring);
                 cJSON *orient=cJSON_GetObjectItem(c,"orientation");
-                cameras[i].portrait=cJSON_IsString(orient)&&!strcmp(orient->valuestring,"portrait");
+                parsed[i].portrait=cJSON_IsString(orient)&&!strcmp(orient->valuestring,"portrait");
             }
-            if(ok) {lock(); state.count=count; state.selected=0; state.generation++; unlock();}
+            if(ok) {lock(); memcpy(all_cams,parsed,sizeof all_cams); all_count=count; unlock();}
         }
         cJSON_Delete(root);
     }
-    esp_http_client_close(h); esp_http_client_cleanup(h); return ok;
+    esp_http_client_close(h); esp_http_client_cleanup(h);
+    if(ok) rebuild_cameras();
+    return ok;
 }
 static void publish(void *ctx,const uint8_t *jpeg,size_t len) {
     viewer_state_t s=snapshot();
@@ -164,8 +225,10 @@ static void network_task(void *arg) {
             }
             vTaskDelay(pdMS_TO_TICKS(100));continue;
         }
+        static bool web_up; if(!web_up) {web_start(&(web_hooks_t){.gateway_changed=apply_gateway,.list_cameras=list_cameras,.apply_cameras=apply_cameras});web_up=true;}
         if(s.off) {vTaskDelay(pdMS_TO_TICKS(100));continue;}
-        if(!strncmp(VIEWER_GATEWAY,"https://",8) && time(NULL)<1700000000) {
+        settings_t cfg_now; settings_get(&cfg_now);
+        if(cfg_now.https && time(NULL)<1700000000) {
             set_status("WAITING LOCAL CLOCK",s.generation);vTaskDelay(pdMS_TO_TICKS(500));continue;
         }
         if(!s.count) {
@@ -225,7 +288,8 @@ static void network_task(void *arg) {
 static void touch_task(void *arg) {
     bool down=false,woke=false; int sx=0,sy=0,x=0,y=0; int64_t start=0;
     for(;;) {
-        lock(); bool portrait=state.count&&cameras[state.selected].portrait; unlock();
+        bool in_ui=ui_active(),open_ui=false,tap_ui=false;
+        lock(); bool portrait=!in_ui&&state.count&&cameras[state.selected].portrait; unlock();
         bool pressed=board_touch(&x,&y,portrait); int64_t now=esp_timer_get_time();
         lock();
         if(pressed) {
@@ -235,13 +299,16 @@ static void touch_task(void *arg) {
                 if(state.off) {state.off=false; state.generation++; strcpy(status,"CONNECTING");}
             }
         }
-        if(!pressed&&down&&!woke) {
+        if(!pressed&&down&&!woke&&in_ui) {
+            tap_ui=abs(x-sx)<15&&abs(y-sy)<15&&now-start<800000;
+        } else if(!pressed&&down&&!woke) {
             int direction=viewer_gesture(x-sx,y-sy,(now-start)/1000);
             if(direction && viewer_switch(&state,direction)) {
                 strcpy(status,"CONNECTING");selected_at=now;
             } else if(abs(x-sx)<15&&abs(y-sy)<15&&now-start<500000) {
                 int lw=portrait?320:480,lh=portrait?480:320;
-                if(controls&&sy>lh-60) {
+                if(!VIEWER_BRINGUP_ONLY&&ui_gear_hit(sx,sy,lw)) open_ui=true;
+                else if(controls&&sy>lh-60) {
                     if(sx<lw/3) brightness=brightness>20?brightness-20:10;
                     else if(sx<2*lw/3) brightness=brightness<80?brightness+20:100;
                     else if(viewer_switch(&state,1)) {strcpy(status,"CONNECTING");selected_at=now;}
@@ -254,6 +321,8 @@ static void touch_task(void *arg) {
         bool off=state.off; unsigned level=brightness;
         if(VIEWER_DIM_SECONDS>0 && now-last_input>(int64_t)VIEWER_DIM_SECONDS*1000000) level=10;
         unlock();
+        if(open_ui) ui_open();
+        if(tap_ui) ui_tap(sx,sy);
         board_brightness(off?0:level);
         down=pressed; vTaskDelay(pdMS_TO_TICKS(15));
     }
@@ -288,12 +357,18 @@ static void render_task(void *arg) {
             xQueueSend(free_frames,&f,0);
         }
         static int64_t overlay_at=0; static uint32_t shown_gen=0; static bool shown_controls=false;
-        static int shown_age=-1; static char shown_label[32]="";
+        static int shown_age=-1; static char shown_label[32]=""; static bool shown_ui=false; static uint32_t shown_uiv=0;
+        bool uia=ui_active();
         s=snapshot(); int64_t now=esp_timer_get_time();
         lock(); bool show=controls; char label[32]; snprintf(label,sizeof label,"%s",status); unlock();
         if(s.off) {vTaskDelay(pdMS_TO_TICKS(40));continue;}
         int age=video_gen==s.generation?(now-last)/1000000:0;
-        if(redraw||shown_gen!=s.generation||shown_controls!=show||strcmp(shown_label,label)||age!=shown_age||(show&&now-overlay_at>1000000)) {
+        bool need=uia?(!shown_ui||ui_version()!=shown_uiv||now-overlay_at>1000000)
+                     :(shown_ui||redraw||shown_gen!=s.generation||shown_controls!=show||strcmp(shown_label,label)||age!=shown_age||(show&&now-overlay_at>1000000));
+        if(need) {
+            uint32_t uiv=ui_version();
+            if(uia) {overlay_set_portrait(false);ui_draw(canvas);}
+            else {
             if(video_gen==s.generation) memcpy(canvas,video,PIXELS*2); else memset(canvas,0,PIXELS*2);
             char text[64];
             bool portrait=s.count&&cameras[s.selected].portrait; overlay_set_portrait(portrait);
@@ -301,6 +376,7 @@ static void render_task(void *arg) {
             overlay_rect(canvas,0,0,lw,32,0);
             snprintf(text,sizeof text,"%s %s",s.count?cameras[s.selected].name:"VIEWER",label);
             overlay_text(canvas,6,4,text,0xffff);
+            if(!VIEWER_BRINGUP_ONLY) ui_draw_gear(canvas,lw);
             if(video_gen==s.generation && now-last>1000000) {
                 snprintf(text,sizeof text,"STALE %lld S",(now-last)/1000000);
                 overlay_rect(canvas,0,32,lw,20,0xf800);overlay_text(canvas,6,36,text,0xffff);
@@ -312,6 +388,7 @@ static void render_task(void *arg) {
                 overlay_text(canvas,6,lh-60,text,0xffff);
                 if(portrait) overlay_text(canvas,6,lh-30,"DIM    BRIGHT    NEXT",0xffff);
                 else overlay_text(canvas,6,lh-30,"DIM          BRIGHT         NEXT",0xffff);
+            }
             }
             // Recheck immediately before handing pixels to the sole display owner.
             viewer_state_t current=snapshot();
@@ -325,6 +402,7 @@ static void render_task(void *arg) {
                 }
                 if(displayed&&displayed%100==0&&redraw) ESP_LOGI("timing","display_us=%lld",esp_timer_get_time()-begin);
             }
+            shown_ui=uia;shown_uiv=uiv;
             shown_gen=s.generation;shown_controls=show;overlay_at=now;shown_age=age;
             snprintf(shown_label,sizeof shown_label,"%s",label);
         }
@@ -343,7 +421,9 @@ static void render_task(void *arg) {
     }
 }
 void app_main(void) {
+    web_log_init();
     mutex=xSemaphoreCreateMutex(); assert(mutex);
+    ui_init(apply_wifi);
     free_frames=xQueueCreate(2,sizeof(frame_t *));ready=xQueueCreate(1,sizeof(frame_t *));assert(free_frames&&ready);
     for(int i=0;i<2;i++) {frames[i].data=heap_caps_malloc(JPEG_LIMIT,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);assert(frames[i].data);frame_t *f=&frames[i];xQueueSend(free_frames,&f,0);}
     board_init();last_input=esp_timer_get_time();
@@ -356,14 +436,14 @@ void app_main(void) {
         assert(xTaskCreate(touch_task,"touch",4096,NULL,5,&touch_handle)==pdPASS);
         return;
     }
-    ESP_ERROR_CHECK(nvs_flash_init());ESP_ERROR_CHECK(esp_netif_init());ESP_ERROR_CHECK(esp_event_loop_create_default());
+    ESP_ERROR_CHECK(nvs_flash_init());settings_init();ESP_ERROR_CHECK(esp_netif_init());ESP_ERROR_CHECK(esp_event_loop_create_default());
     esp_netif_create_default_wifi_sta();
     wifi_init_config_t init=WIFI_INIT_CONFIG_DEFAULT();ESP_ERROR_CHECK(esp_wifi_init(&init));
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT,ESP_EVENT_ANY_ID,event,NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT,IP_EVENT_STA_GOT_IP,event,NULL));
-    wifi_config_t cfg={0};
-    snprintf((char *)cfg.sta.ssid,sizeof cfg.sta.ssid,"%s",VIEWER_SSID);
-    snprintf((char *)cfg.sta.password,sizeof cfg.sta.password,"%s",VIEWER_PASSWORD);
+    wifi_config_t cfg={0}; settings_t saved; settings_get(&saved);
+    memcpy(cfg.sta.ssid,saved.ssid,strnlen(saved.ssid,sizeof cfg.sta.ssid));
+    memcpy(cfg.sta.password,saved.pass,strnlen(saved.pass,sizeof cfg.sta.password));
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA,&cfg));ESP_ERROR_CHECK(esp_wifi_start());
     esp_sntp_config_t ntp=ESP_NETIF_SNTP_DEFAULT_CONFIG(VIEWER_NTP_SERVER);

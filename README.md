@@ -193,3 +193,11 @@ If the screen is blank, start with bring-up mode, vendor pin/init comparison, ba
 Gateway logs intentionally suppress raw FFmpeg stderr because it can reveal stream tokens; the probe reports success/failure without echoing secrets. An operator can run FFmpeg interactively on the Pi when needed, keeping its output private. Worker failures retry at 1–30 seconds plus jitter. Compose restarts the gateway process on failure; health checks report liveness without automatically restarting healthy processes just because a source is down.
 
 For updates, preserve a tagged built image (`docker image tag IMAGE_ID viewer-gateway:known-good`), configuration and local firmware export before rebuilding. After updating your checkout, run tests/probes and `python3 tools/deploy.py update`. Roll back using a Compose override with `image: viewer-gateway:known-good` and `pull_policy: never`, then `python3 tools/deploy.py restart --override rollback.yaml`; restore matching config if its schema changed. Firmware rollback uses the saved USB flash export. See `docs/benchmark.md` for acceptance and soak procedures.
+
+## Runtime settings (device and web)
+
+Values in `provision.h` are only defaults; anything saved at runtime is stored in NVS and wins.
+
+- **Device:** tap the gear in the top-right of the video view. Settings shows Wi-Fi status, the device IP and the web URL. *Scan Wi-Fi* lists networks; tap one and type the password on the on-screen keyboard (lowercase letters show cyan, uppercase white). Open networks join immediately.
+- **Web:** browse to `http://<device-ip>/` to set the encoder IP, port and key (the key is write-only; it is never sent back to the page). Saving reloads the camera list. The same page streams the device's log output live, like an ESPHome device page.
+- The web page has **no authentication**; use it only on a trusted LAN.
