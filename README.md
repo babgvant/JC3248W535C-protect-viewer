@@ -115,9 +115,12 @@ Guition's [model listing](https://www.guition.com/model-selection) identifies JC
 
 The configured map is CS 45, clock 47, D0/D1/D2/D3 21/48/40/39, backlight 1; touch SDA/SCL 4/8, address 0x3B, polled with no interrupt. No LCD reset pin is assigned. Compare `firmware/main/board.h` with the schematic's IO distribution and the vendor demo's `esp_bsp.h` **before connecting this firmware**. Confirm octal PSRAM and flash identification using boot logs/esptool. The selected Espressif [AXS15231B 2.1.1 driver](https://components.espressif.com/components/espressif/esp_lcd_axs15231b/versions/2.1.1/readme) includes LCD/touch support and a default vendor initialization table; an actual module revision may require a different table. See `docs/architecture.md` for the driver's unusual QSPI sequential-strip behavior.
 
-Install **ESP-IDF v6.1**, including ESP32-S3 toolchains. Use an IDF terminal:
+Install **ESP-IDF v6.1**, including ESP32-S3 toolchains (on Windows, use the [ESP-IDF Tools Installer](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/get-started/windows-setup.html) or `install.ps1 esp32s3` from the IDF checkout). Activate the IDF environment in the terminal you build from, then run the build.
+
+**Linux/macOS** (IDF checkout at `~/esp/esp-idf`):
 
 ```sh
+. ~/esp/esp-idf/export.sh
 cp firmware/main/provision.example.h firmware/main/provision.h
 # Edit provision.h: SSID/password, gateway URL and token from the Pi.
 cd firmware
@@ -126,7 +129,22 @@ idf.py build
 idf.py -p YOUR_USB_PORT flash monitor
 ```
 
-On Windows use `Copy-Item` instead of `cp` if needed. The build downloads exact component versions and uses the checked-in `dependencies.lock` with component hashes. Defaults select 16 MB flash, octal 80 MHz PSRAM and a 6 MB factory application partition. The rest of flash is deliberately unassigned. USB firmware updates are used for this release; OTA is not implemented.
+**Windows (PowerShell)** (IDF checkout at `C:\Users\YOU\esp\v6.1\esp-idf`; use `COMx` for the port):
+
+```powershell
+# Allow the unsigned export script for this window only (not a system change):
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+# The leading ". " is required so the environment applies to this session:
+. C:\Users\YOU\esp\v6.1\esp-idf\export.ps1
+Copy-Item firmware\main\provision.example.h firmware\main\provision.h
+# Edit provision.h: SSID/password, gateway URL and token from the Pi.
+cd firmware
+idf.py set-target esp32s3
+idf.py build
+idf.py -p COM3 flash monitor
+```
+
+On Windows, `export.bat` only works from `cmd.exe`: run from PowerShell it activates a child shell that exits, so `idf.py` is not found afterwards. The Tools Installer also adds an "ESP-IDF PowerShell" shortcut that does all of this for you. Find your port in Device Manager under Ports (COM & LPT). The build downloads exact component versions and uses the checked-in `dependencies.lock` with component hashes. Defaults select 16 MB flash, octal 80 MHz PSRAM and a 6 MB factory application partition. The rest of flash is deliberately unassigned. USB firmware updates are used for this release; OTA is not implemented.
 
 First set `VIEWER_BRINGUP_ONLY=1`: boot should show the embedded native JPEG color bars, readable landscape labels and tap controls. Verify touch coordinates/gesture directions and brightness. This mode does not start Wi-Fi. After validating the display, set it to 0, provision one camera on the Pi, confirm live video, then add cameras in the desired order.
 
