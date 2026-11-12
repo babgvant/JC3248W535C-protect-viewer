@@ -67,14 +67,18 @@ def command(camera, url):
         filters += ['transpose=2']
     elif camera['rotation'] == 180:
         filters += ['hflip', 'vflip']
+    # Portrait cameras (e.g. a doorbell) use the panel's native 320x480 orientation directly;
+    # landscape uses a 480x320 logical canvas rotated into native storage below.
+    portrait = camera.get('orientation', 'landscape') == 'portrait'
+    w, h = (320, 480) if portrait else (480, 320)
     if camera['mode'] == 'fill':
-        filters += ['scale=480:320:force_original_aspect_ratio=increase', 'crop=480:320']
+        filters += [f'scale={w}:{h}:force_original_aspect_ratio=increase', f'crop={w}:{h}']
     else:
         # min() prevents upscaling; padding maintains an exact decoder canvas.
-        filters += ["scale=w='min(480,iw)':h='min(320,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
-                    'pad=480:320:(ow-iw)/2:(oh-ih)/2:black']
-    # Rotate canvas at gateway: native panel is portrait, viewed clockwise.
-    filters += ['setsar=1', 'transpose=2', 'format=yuvj420p']
+        filters += [f"scale=w='min({w},iw)':h='min({h},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
+                    f'pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black']
+    # Landscape: rotate canvas at gateway, native panel is portrait, viewed clockwise.
+    filters += ['setsar=1'] + ([] if portrait else ['transpose=2']) + ['format=yuvj420p']
     return args + ['-vf', ','.join(filters), '-c:v', 'mjpeg', '-threads', '1',
                    '-q:v', str(camera['quality']), '-pix_fmt', 'yuvj420p',
                    '-f', 'image2pipe', '-flush_packets', '1', 'pipe:1']

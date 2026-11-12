@@ -81,11 +81,12 @@ void board_init(void) {
     esp_lcd_touch_config_t tc={.x_max=320,.y_max=480,.rst_gpio_num=-1,.int_gpio_num=-1};
     ESP_ERROR_CHECK(esp_lcd_touch_new_i2c_axs15231b(ti,&tc,&touch));
 }
-bool board_touch(int *x,int *y) {
+bool board_touch(int *x,int *y,bool portrait) {
     if(esp_lcd_touch_read_data(touch)!=ESP_OK) return false;
     esp_lcd_touch_point_data_t point; uint8_t count=0;
     if(esp_lcd_touch_get_data(touch,&point,&count,1)!=ESP_OK || !count) return false;
-    *x=479-point.y; *y=point.x; return true;
+    if(portrait) {*x=point.x; *y=point.y;} else {*x=479-point.y; *y=point.x;}
+    return true;
 }
 void board_brightness(unsigned percent) {
     static unsigned previous=101;

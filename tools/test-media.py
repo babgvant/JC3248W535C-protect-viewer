@@ -16,9 +16,9 @@ if not binary:
 help_result=subprocess.run([binary,'-hide_banner','-h','demuxer=rtsp'],capture_output=True,text=True,timeout=10)
 assert help_result.returncode==0 and any(line.strip().startswith('-timeout ') for line in help_result.stdout.splitlines()), 'FFmpeg must support the RTSP demuxer timeout option'
 print('RTSP demuxer supports the configured socket timeout option')
-for mode in ('fit','fill'):
-    for rotation in (0,90,180,270):
-        camera=dict(fps=10,quality=5,mode=mode,rotation=rotation,decoder='software')
+for mode,rotation,orientation in [(m,r,o) for m in ('fit','fill') for r in (0,90,180,270) for o in ('landscape','portrait')]:
+    if True:
+        camera=dict(fps=10,quality=5,mode=mode,rotation=rotation,decoder='software',orientation=orientation)
         args=command(camera,'rtsp://placeholder')
         # Replace RTSP input only; use the production filter/encode arguments unchanged.
         output=args[args.index('-map'):]
@@ -36,4 +36,4 @@ for mode in ('fit','fill'):
             assert [data[i+11],data[i+14],data[i+17]]==[0x22,0x11,0x11]
         Path('artifacts').mkdir(exist_ok=True)
         Path('artifacts/sample-native.jpg').write_bytes(frames[0])
-        print(mode,rotation,'3 valid baseline 320x480 YUV420 frames',len(frames[0]),'bytes')
+        print(mode,rotation,orientation,'3 valid baseline 320x480 YUV420 frames',len(frames[0]),'bytes')

@@ -34,6 +34,13 @@ class FramingTests(unittest.TestCase):
         self.assertIn('mjpeg', args); self.assertIn('yuvj420p', args)
         self.assertIn('transpose=2', args[args.index('-vf')+1])
 
+    def test_portrait_orientation_skips_canvas_rotation(self):
+        vf = command(dict(CAM, orientation='portrait', mode='fill'), 'rtsp://x/y')
+        vf = vf[vf.index('-vf')+1]
+        self.assertIn('crop=320:480', vf); self.assertNotIn('transpose=2', vf)
+        vf = command(dict(CAM, orientation='portrait'), 'rtsp://x/y')
+        self.assertIn('pad=320:480', vf[vf.index('-vf')+1])
+
     def test_rtsp_socket_timeout_is_a_demuxer_option_before_input(self):
         for url in ('rtsp://camera.invalid/live','rtsps://camera.invalid/live'):
             args=command(CAM,url)

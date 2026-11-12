@@ -30,6 +30,8 @@ def load_config(path):
         c.setdefault('fps', 10); c.setdefault('quality', 5)
         c.setdefault('mode', 'fit'); c.setdefault('rotation', 0); c.setdefault('decoder', 'software')
         c.setdefault('hw_download', False)
+        c.setdefault('orientation', 'landscape')
+        if c['orientation'] not in ('landscape', 'portrait'): raise ValueError('orientation must be landscape or portrait')
         if not isinstance(c['hw_download'], bool): raise ValueError('hw_download must be boolean')
         c.setdefault('source_tls_verify', True)
         if not isinstance(c['source_tls_verify'], bool): raise ValueError('source_tls_verify must be boolean')

@@ -30,6 +30,7 @@ Remove the doorbell entry for a one-camera installation, or add entries in swipe
 | `fps` | 10; integer 5–15 |
 | `quality` | FFmpeg JPEG quantizer 5; 2–15, lower is better/larger |
 | `mode` | `fit` letterboxes without upscaling; `fill` crops centered to 3:2 |
+| `orientation` | `landscape` (default) or `portrait`; portrait (e.g. a doorbell) uses the panel's native 320×480 layout, with overlays and touch controls following it |
 | `rotation` | 0, 90, 180, 270 degrees clockwise, before fit/fill |
 | `decoder` | `software`; override only after a successful full pipeline probe |
 | `hw_download` | false; true adds `hwdownload,format=nv12` for device frames |

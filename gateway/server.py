@@ -187,7 +187,7 @@ def create_app(cfg, spawn=asyncio.create_subprocess_exec):
     app[ADMISSION] = asyncio.Lock()
     async def health(_): return web.json_response({'status': 'ok'})
     async def cameras(_):
-        return web.json_response({'cameras': [{'id': c['id'], 'name': c['name']} for c in cfg['cameras']]})
+        return web.json_response({'cameras': [{'id': c['id'], 'name': c['name'], 'orientation': c.get('orientation', 'landscape')} for c in cfg['cameras']]})
     async def metrics(_):
         return web.json_response({k: {'clients': len(w.clients), 'running': w.task is not None,
                                      'frames': w.sequence, 'failures': w.failures,

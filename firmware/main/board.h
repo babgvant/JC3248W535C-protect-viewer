@@ -12,6 +12,6 @@
 #define TOUCH_SDA 4
 #define TOUCH_SCL 8
 void board_init(void);
-bool board_touch(int *x,int *y);
+bool board_touch(int *x,int *y,bool portrait);
 void board_brightness(unsigned percent);
 bool board_present(const uint16_t *native_rgb565, bool (*current)(void *),void *ctx);

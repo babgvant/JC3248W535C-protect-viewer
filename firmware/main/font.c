@@ -20,14 +20,18 @@ static uint16_t bits(char c) {
     if(c=='/') return 4680;
     return 0;
 }
+static bool portrait;
+void overlay_set_portrait(bool value) {portrait=value;}
 void overlay_rect(uint16_t *p,int x,int y,int w,int h,uint16_t color) {
-    // Native pixel (logical y, 479-logical x). Store big-endian RGB565 for LCD.
+    // Landscape: native pixel (logical y, 479-logical x). Portrait: logical == native (320x480).
+    // Store big-endian RGB565 for LCD.
     color=(color>>8)|(color<<8);
-    for(int yy=y;yy<y+h&&yy<320;yy++) for(int xx=x;xx<x+w&&xx<480;xx++)
-        if(xx>=0&&yy>=0) p[(479-xx)*320+yy]=color;
+    int lw=portrait?320:480,lh=portrait?480:320;
+    for(int yy=y;yy<y+h&&yy<lh;yy++) for(int xx=x;xx<x+w&&xx<lw;xx++)
+        if(xx>=0&&yy>=0) p[portrait?yy*320+xx:(479-xx)*320+yy]=color;
 }
 void overlay_text(uint16_t *p,int x,int y,const char *s,uint16_t c) {
-    for(;*s&&x<470;s++,x+=8) {
+    for(;*s&&x<(portrait?310:470);s++,x+=8) {
         uint16_t b=bits(*s);
         for(int row=0;row<5;row++) for(int col=0;col<3;col++)
             if(b&(1<<(14-row*3-col))) overlay_rect(p,x+col*2,y+row*2,2,2,c);

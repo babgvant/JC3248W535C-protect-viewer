@@ -33,7 +33,7 @@
 #endif
 
 #define PIXELS (320*480)
-typedef struct {char id[33],name[32];} camera_t;
+typedef struct {char id[33],name[32];bool portrait;} camera_t;
 typedef struct {uint8_t *data; size_t len; uint32_t gen; int64_t received;} frame_t;
 static camera_t cameras[16];
 static viewer_state_t state={.generation=1};
@@ -127,6 +127,8 @@ static bool catalog(void) {
                 if(strspn(id->valuestring,"abcdefghijklmnopqrstuvwxyz0123456789_-")!=strlen(id->valuestring)) {ok=false;break;}
                 snprintf(cameras[i].id,sizeof cameras[i].id,"%s",id->valuestring);
                 snprintf(cameras[i].name,sizeof cameras[i].name,"%s",name->valuestring);
+                cJSON *orient=cJSON_GetObjectItem(c,"orientation");
+                cameras[i].portrait=cJSON_IsString(orient)&&!strcmp(orient->valuestring,"portrait");
             }
             if(ok) {lock(); state.count=count; state.selected=0; state.generation++; unlock();}
         }
@@ -223,7 +225,8 @@ static void network_task(void *arg) {
 static void touch_task(void *arg) {
     bool down=false,woke=false; int sx=0,sy=0,x=0,y=0; int64_t start=0;
     for(;;) {
-        bool pressed=board_touch(&x,&y); int64_t now=esp_timer_get_time();
+        lock(); bool portrait=state.count&&cameras[state.selected].portrait; unlock();
+        bool pressed=board_touch(&x,&y,portrait); int64_t now=esp_timer_get_time();
         lock();
         if(pressed) {
             last_input=now;
@@ -237,9 +240,10 @@ static void touch_task(void *arg) {
             if(direction && viewer_switch(&state,direction)) {
                 strcpy(status,"CONNECTING");selected_at=now;
             } else if(abs(x-sx)<15&&abs(y-sy)<15&&now-start<500000) {
-                if(controls&&sy>260) {
-                    if(sx<160) brightness=brightness>20?brightness-20:10;
-                    else if(sx<320) brightness=brightness<80?brightness+20:100;
+                int lw=portrait?320:480,lh=portrait?480:320;
+                if(controls&&sy>lh-60) {
+                    if(sx<lw/3) brightness=brightness>20?brightness-20:10;
+                    else if(sx<2*lw/3) brightness=brightness<80?brightness+20:100;
                     else if(viewer_switch(&state,1)) {strcpy(status,"CONNECTING");selected_at=now;}
                 } else controls=!controls;
             }
@@ -292,19 +296,22 @@ static void render_task(void *arg) {
         if(redraw||shown_gen!=s.generation||shown_controls!=show||strcmp(shown_label,label)||age!=shown_age||(show&&now-overlay_at>1000000)) {
             if(video_gen==s.generation) memcpy(canvas,video,PIXELS*2); else memset(canvas,0,PIXELS*2);
             char text[64];
-            overlay_rect(canvas,0,0,480,32,0);
+            bool portrait=s.count&&cameras[s.selected].portrait; overlay_set_portrait(portrait);
+            int lw=portrait?320:480,lh=portrait?480:320;
+            overlay_rect(canvas,0,0,lw,32,0);
             snprintf(text,sizeof text,"%s %s",s.count?cameras[s.selected].name:"VIEWER",label);
             overlay_text(canvas,6,4,text,0xffff);
             if(video_gen==s.generation && now-last>1000000) {
                 snprintf(text,sizeof text,"STALE %lld S",(now-last)/1000000);
-                overlay_rect(canvas,0,32,480,20,0xf800);overlay_text(canvas,6,36,text,0xffff);
+                overlay_rect(canvas,0,32,lw,20,0xf800);overlay_text(canvas,6,36,text,0xffff);
             }
             if(show) {
-                overlay_rect(canvas,0,255,480,65,0);
+                overlay_rect(canvas,0,lh-65,lw,65,0);
                 wifi_ap_record_t ap; int rssi=esp_wifi_sta_get_ap_info(&ap)==ESP_OK?ap.rssi:0;
                 snprintf(text,sizeof text,"RSSI %d HEAP %u",rssi,(unsigned)esp_get_free_heap_size());
-                overlay_text(canvas,6,260,text,0xffff);
-                overlay_text(canvas,6,290,"DIM          BRIGHT         NEXT",0xffff);
+                overlay_text(canvas,6,lh-60,text,0xffff);
+                if(portrait) overlay_text(canvas,6,lh-30,"DIM    BRIGHT    NEXT",0xffff);
+                else overlay_text(canvas,6,lh-30,"DIM          BRIGHT         NEXT",0xffff);
             }
             // Recheck immediately before handing pixels to the sole display owner.
             viewer_state_t current=snapshot();
