@@ -73,10 +73,38 @@ static esp_http_client_handle_t client(const char *path,int timeout, char *conte
     if(h) {snprintf(auth,sizeof auth,"Bearer %s",VIEWER_TOKEN); esp_http_client_set_header(h,"Authorization",auth);}
     return h;
 }
+static const char *wifi_reason_name(int r) {
+    switch(r) {
+    case 2: return "AUTH_EXPIRE"; case 8: return "ASSOC_LEAVE"; case 15: return "4WAY_HANDSHAKE_TIMEOUT";
+    case 200: return "BEACON_TIMEOUT"; case 201: return "NO_AP_FOUND"; case 202: return "AUTH_FAIL";
+    case 203: return "ASSOC_FAIL"; case 204: return "HANDSHAKE_TIMEOUT"; case 205: return "CONNECTION_FAIL";
+    case 210: return "NO_AP_FOUND_W_COMPATIBLE_SECURITY"; case 211: return "NO_AP_FOUND_IN_AUTHMODE_THRESHOLD";
+    case 212: return "NO_AP_FOUND_IN_RSSI_THRESHOLD"; default: return "see esp_wifi_types_generic.h";
+    }
+}
+// Diagnostic: list what the radio can see and whether VIEWER_SSID is among it. Called between connect attempts.
+static void wifi_diag_scan(void) {
+    esp_wifi_disconnect();
+    wifi_scan_config_t sc={.show_hidden=true};
+    esp_err_t e=esp_wifi_scan_start(&sc,true);
+    if(e!=ESP_OK) {ESP_LOGW("wifi_diag","scan failed: %s",esp_err_to_name(e));return;}
+    wifi_ap_record_t recs[20]; uint16_t n=sizeof recs/sizeof recs[0], total=0;
+    esp_wifi_scan_get_ap_num(&total);
+    if(esp_wifi_scan_get_ap_records(&n,recs)!=ESP_OK) n=0;
+    bool seen=false;
+    ESP_LOGI("wifi_diag","scan: %u APs visible (showing %u strongest-first as reported)",total,n);
+    for(int i=0;i<n;i++) {
+        bool target=!strcmp((const char *)recs[i].ssid,VIEWER_SSID); seen|=target;
+        ESP_LOGI("wifi_diag","  %-32s rssi=%d ch=%d auth=%d%s",(const char *)recs[i].ssid,recs[i].rssi,recs[i].primary,recs[i].authmode,target?"  <== target":"");
+    }
+    if(!seen) ESP_LOGW("wifi_diag","target SSID \"%s\" NOT seen in scan",VIEWER_SSID);
+}
 static void event(void *a,esp_event_base_t base,int32_t id,void *data) {
     if(base==WIFI_EVENT && id==WIFI_EVENT_STA_START) esp_wifi_connect();
     if(base==IP_EVENT && id==IP_EVENT_STA_GOT_IP) {lock(); wifi=true;wifi_backoff=500; unlock();}
     if(base==WIFI_EVENT && id==WIFI_EVENT_STA_DISCONNECTED) {
+        const wifi_event_sta_disconnected_t *d=data;
+        ESP_LOGW("wifi_diag","disconnected: reason=%d (%s) rssi=%d",d->reason,wifi_reason_name(d->reason),d->rssi);
         lock(); wifi=false; state.generation++; strcpy(status,"WIFI DISCONNECTED");
         wifi_retry_at=esp_timer_get_time()+(wifi_backoff+esp_random()%(wifi_backoff/4+1))*1000LL;
         wifi_backoff=wifi_backoff<15000?wifi_backoff*2:30000;
@@ -128,7 +156,10 @@ static void network_task(void *arg) {
         viewer_state_t s=snapshot(); lock(); bool connected=wifi; unlock();
         if(!connected) {
             lock(); bool retry=esp_timer_get_time()>wifi_retry_at; if(retry) wifi_retry_at=esp_timer_get_time()+30000000; unlock();
-            if(retry) esp_wifi_connect();
+            if(retry) {
+                static unsigned attempts; if(attempts++>0) wifi_diag_scan(); // not on the first attempt: STA_START already connects
+                esp_wifi_connect();
+            }
             vTaskDelay(pdMS_TO_TICKS(100));continue;
         }
         if(s.off) {vTaskDelay(pdMS_TO_TICKS(100));continue;}
@@ -146,8 +177,11 @@ static void network_task(void *arg) {
         esp_http_client_handle_t h=client(path,500,ct); if(!h) {vTaskDelay(pdMS_TO_TICKS(1000));continue;}
         set_status("CONNECTING",s.generation);
         bool fresh=false;
-        if(esp_http_client_open(h,0)==ESP_OK && esp_http_client_fetch_headers(h)>=0) {
+        esp_err_t open_err=esp_http_client_open(h,0);
+        int64_t header_len=open_err==ESP_OK?esp_http_client_fetch_headers(h):-1;
+        if(open_err==ESP_OK && header_len>=0) {
             int code=esp_http_client_get_status_code(h);
+            ESP_LOGI("net","stream %s: HTTP %d, content-type '%s'",path,code,ct);
             esp_http_client_set_timeout_ms(h,100);
             multipart_t parser;
             if(code==200 && mp_init(&parser,ct,compressed,publish,NULL)) {
@@ -170,7 +204,10 @@ static void network_task(void *arg) {
                     taskYIELD();
                 }
             } else set_status(code==502?"SOURCE UNAVAILABLE":"GATEWAY ERROR",s.generation);
-        } else set_status("GATEWAY UNAVAILABLE",s.generation);
+        } else {
+            ESP_LOGW("net","stream %s: request failed (open=%s, headers=%lld, errno=%d)",path,esp_err_to_name(open_err),(long long)header_len,esp_http_client_get_errno(h));
+            set_status("GATEWAY UNAVAILABLE",s.generation);
+        }
         esp_http_client_close(h); esp_http_client_cleanup(h);
         reconnects++;
         if(fresh) set_status("RECONNECTING",s.generation);
