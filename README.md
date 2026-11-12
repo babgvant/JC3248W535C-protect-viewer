@@ -2,7 +2,7 @@
 
 ESP-IDF firmware for a Guition JC3248W535C and an on-demand FFmpeg MJPEG gateway for a Raspberry Pi 5 (4 GB). Viewing needs Wi-Fi, the LAN gateway and the local camera source. Home Assistant, cloud services, audio, recording, talkback and automation are outside this release.
 
-**Validation status:** firmware builds on ESP-IDF 6.1; host parser/switching tests and gateway lifecycle tests pass. Real FFmpeg synthetic tests verify all eight fit/fill and rotation combinations. User-supplied Pi 5 host logs confirm a 30-frame HEVC hardware decode and resize/JPEG test; the opt-in Docker hardware path still needs validation on the Pi. No board or Pi shell was supplied: LCD/touch operation, latency, power and a 24-hour soak remain unmeasured. The included binary uses placeholder provisioning. Do not flash it expecting a configured viewer.
+**Validation status:** firmware builds on ESP-IDF 6.1; host parser/switching tests and gateway lifecycle tests pass. Real FFmpeg synthetic tests verify all eight fit/fill and rotation combinations. User-supplied Pi 5 host logs confirm a 30-frame HEVC hardware decode and resize/JPEG test; user-supplied container results also confirm hardware decoding and 30 JPEG frames. Sustained stability and CPU/power savings remain unmeasured. No board or Pi shell was supplied: LCD/touch operation, latency, power and a 24-hour soak remain unmeasured. The included binary uses placeholder provisioning. Do not flash it expecting a configured viewer.
 
 ## Pi deployment
 
@@ -32,8 +32,8 @@ Remove the doorbell entry for a one-camera installation, or add entries in swipe
 | `mode` | `fit` letterboxes without upscaling; `fill` crops centered to 3:2 |
 | `orientation` | `landscape` (default) or `portrait`; portrait (e.g. a doorbell) uses the panel's native 320×480 layout, with overlays and touch controls following it |
 | `rotation` | 0, 90, 180, 270 degrees clockwise, before fit/fill |
-| `decoder` | `software`; override only after a successful full pipeline probe |
-| `hwaccel` | `none` (default) or `drm`; `drm` enables the Raspberry Pi patched FFmpeg HEVC hardware path |
+| `decoder` | `hevc` (default); use `software` for CPU decoding of H.264 or HEVC |
+| `hwaccel` | `drm` by default with `hevc`, otherwise `none`; set `none` for CPU decoding |
 | `hw_download` | false; true adds `hwdownload,format=nv12` for device frames |
 | `source_ca_file` | optional in-container PEM path for RTSPS verification |
 | `idle_seconds` | global 5; 0–60 |
@@ -61,11 +61,11 @@ Prerequisite preparation runs automatically for `up`, `update`, and `restart`, o
 
 Automatic package installation supports Debian/Raspberry Pi OS/Ubuntu with apt and compatible configured repositories. On your Debian 13 Pi, distro packages `docker-cli`, `docker.io` (engine), `docker-compose` (v2), and `docker-buildx` are available; where Docker CE repositories are already configured, their packages are preferred. The CLI is installed explicitly because Debian 13's engine package only recommends it, and this script disables optional recommendations. Existing engine-only installations are completed by adding the missing CLI. The script does not replace apt sources, run a downloaded installer, remove an existing container stack, or replace a broken existing executable. Package/service errors stop deployment with a retryable explanation. Package operations may request your sudo password, retry downloads, and wait up to 120 seconds for dpkg locks.
 
-For deployment-specific device mappings or TLS mounts, pass `--override PATH` (repeatable) to each Docker action, for example `python3 tools/deploy.py up --override compose.hwa.yaml`. The script does not change firewall rules or automatically change hardware access.
+The default Compose service maps the tested Pi 5 HEVC devices and video group. For other device mappings or TLS mounts, pass `--override PATH` (repeatable) to each Docker action. The script does not change firewall rules.
 
 `restart` recreates so editor/atomic file replacements are remounted correctly. `down`, `status`, and `logs` work even if config is invalid or missing. To migrate an older installation, run `migrate`, then `up`; `config.json.legacy` and old secret files are retained, so remove those copies yourself only after verifying deployment. Transcode settings remain fixed per camera ID, and subscribers share identical output. Grace-period workers can be reclaimed for a switch when the worker limit is reached. No adjacent prewarming occurs.
 
-The image pins Python 3.12.8 and all Python dependencies; apt supplies the distribution security-maintained FFmpeg. Record the image ID and `ffmpeg -version` with each deployment, then preserve the built image for exact rollback. For byte-identical rebuilds, pin a tested base-image digest and Debian snapshot in your deployment; the public Dockerfile intentionally does not freeze OS security updates. Docker/ARM image build has not been run in this Windows environment.
+The single ARM64 Trixie image uses distribution Python, pinned Python dependencies, and Raspberry Pi's patched FFmpeg. It supports both hardware HEVC and software decoding, selected per camera in `config.json`. Record the image ID and `ffmpeg -version` with each deployment, then preserve the built image for exact rollback. For byte-identical rebuilds, pin a tested base-image digest and Debian snapshot in your deployment; the public Dockerfile intentionally does not freeze OS security updates. Docker/ARM image build has not been run in this Windows environment.
 
 ## Pi 5 acceleration and source selection
 
@@ -92,22 +92,22 @@ python3 tools/probe.py --camera doorbell \
 
 The DRM probe captures verbose FFmpeg logs internally and checks for the fixed `Hwaccel V4L2 HEVC stateless` driver marker. Reports expose only `hardware_decode_confirmed`, never raw logs (verbose SDP contains session crypto keys even when the URL is redacted). A successful DRM probe requires that marker and all 30 JPEG frames; `hardware_unconfirmed` means output succeeded without confirming this specific Pi driver. The tested build automatically transfers frames to CPU memory, so leave `hw_download` false. Other decoder builds may need different frame handling.
 
-### Opt-in Pi 5 Docker image
+### Default Pi 5 Docker image
 
-The default Bookworm image supplies stock Debian FFmpeg and has no hardware device mappings. Use `compose.rpi-hwa.yaml` for a separate ARM64 Trixie image that installs Raspberry Pi's patched FFmpeg from its signed apt repository. The build checks for `--enable-v4l2-request`; repository updates can change the packaged version, so always run the container probe. It does not mount host executables or host libraries. Only `/dev/video19` and `/dev/media1` are mapped, with supplementary group `44` (`video` on the tested Pi). Verify those node numbers and the numeric group on other hosts. No privileged container or DRM display/GPU mappings are needed for the tested decode path.
+The default ARM64 Trixie image installs Raspberry Pi's patched FFmpeg from its signed apt repository. Both software and hardware decoding use this same image; no alternate Compose file is needed. The default camera profile requires an HEVC source (enable Super Encoding in Protect and verify the actual stream codec). The build checks for `--enable-v4l2-request`; repository updates can change the packaged version, so always run the container probe. It does not mount host executables or host libraries. Only `/dev/video19` and `/dev/media1` are mapped, with supplementary group `44` (`video` on the tested Pi). Verify those node numbers and the numeric group on other hosts. No privileged container or DRM display/GPU mappings are needed for the tested decode path.
 
 First build the image; this does not recreate the running gateway. The deployment script supplies environment variables only during its own commands, so set them for these direct Compose commands:
 
 ```sh
 export LAN_IP="$(python3 -c 'import json; print(json.load(open("gateway/config.json"))["lan_ip"])')"
 export VIEWER_UID="$(id -u)" VIEWER_GID="$(id -g)"
-docker compose -f compose.yaml -f compose.rpi-hwa.yaml build gateway
+docker compose build gateway
 ```
 
 Probe in a disposable container with the production mounts, permissions and device mappings. It writes only to that container's temporary directory and leaves the running gateway alone:
 
 ```sh
-docker compose -f compose.yaml -f compose.rpi-hwa.yaml run --rm --no-deps gateway \
+docker compose run --rm --no-deps gateway \
   sh -c 'python /app/probe.py --config /config/config.json --camera doorbell --decoder hevc --hwaccel drm --no-hw-download --output /tmp/doorbell-hwa.json; result=$?; cat /tmp/doorbell-hwa.json; exit "$result"'
 ```
 
@@ -123,11 +123,19 @@ Validate and recreate with the tested image (no rebuild):
 
 ```sh
 python3 tools/deploy.py check
-python3 tools/deploy.py restart --override compose.rpi-hwa.yaml
-python3 tools/deploy.py status --override compose.rpi-hwa.yaml
+python3 tools/deploy.py restart
+python3 tools/deploy.py status
 ```
 
-Keep passing `--override compose.rpi-hwa.yaml` to subsequent deployment actions. To return to CPU decoding, set `decoder` to `software`, `hwaccel` to `none`, and `hw_download` to false, then use `python3 tools/deploy.py up` without the override to rebuild/recreate the default image. Container hardware decoding, sustained stability and CPU/power savings still need validation on the Pi; only the short host test has been supplied so far.
+Software decoding is a per-camera setting in the same container:
+
+```json
+"decoder": "software",
+"hwaccel": "none",
+"hw_download": false
+```
+
+This supports CPU decoding of either H.264 or HEVC. After changing a camera profile, run `python3 tools/deploy.py check` and `python3 tools/deploy.py restart`; no image rebuild or override is required. Existing explicit software settings are preserved when loading configuration, and initialization never overwrites existing `config.json`. Missing decoder settings now default to HEVC with DRM acceleration. The former `compose.rpi-hwa.yaml` override has been folded into `compose.yaml`; remove it from deployment commands. User-supplied host and container tests both passed; sustained stability and CPU/power savings remain unmeasured.
 
 For an H.264 source, use the CPU baseline or an existing capable local transcode service. Compare a low H.264 profile on CPU against a larger HEVC profile using hardware decode: a larger source plus frame transfer can cost more overall. JPEG encoding and scaling here still use CPU. Choose the lowest-cost source that resolves useful detail at the panel resolution. Measure CPU/memory/temperature; those are proxies, not watts.
 

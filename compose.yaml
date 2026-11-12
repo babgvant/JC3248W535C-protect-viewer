@@ -1,6 +1,13 @@
 services:
   gateway:
-    build: ./gateway
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    devices:
+      - /dev/video19:/dev/video19
+      - /dev/media1:/dev/media1
+    group_add:
+      - "44"
     restart: unless-stopped
     init: true
     user: "${VIEWER_UID:-10001}:${VIEWER_GID:-10001}"

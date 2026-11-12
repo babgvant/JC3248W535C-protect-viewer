@@ -70,6 +70,14 @@ class ConfigDeploymentTests(unittest.TestCase):
         if os.name == 'posix': self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
 
     def test_hwaccel_defaults_and_validation(self):
+        self.cfg['cameras'][0].pop('decoder', None)
+        self.cfg['cameras'][0].pop('hwaccel', None)
+        self.write()
+        camera = load_config(self.path)['cameras'][0]
+        self.assertEqual(camera['decoder'], 'hevc')
+        self.assertEqual(camera['hwaccel'], 'drm')
+        self.assertFalse(camera['hw_download'])
+        self.cfg['cameras'][0]['decoder'] = 'software'
         self.write()
         self.assertEqual(load_config(self.path)['cameras'][0]['hwaccel'], 'none')
         self.cfg['cameras'][0].update(decoder='hevc', hwaccel='drm')

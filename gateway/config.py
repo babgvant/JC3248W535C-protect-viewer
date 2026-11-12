@@ -28,9 +28,10 @@ def load_config(path):
         if not isinstance(c, dict): raise ValueError('camera must be an object')
         if 'url_file' in c: raise ValueError('legacy url_file: run deploy.py migrate')
         c.setdefault('fps', 10); c.setdefault('quality', 5)
-        c.setdefault('mode', 'fit'); c.setdefault('rotation', 0); c.setdefault('decoder', 'software')
+        c.setdefault('mode', 'fit'); c.setdefault('rotation', 0); c.setdefault('decoder', 'hevc')
         c.setdefault('hw_download', False)
-        c.setdefault('hwaccel', 'none')
+        # Preserve explicitly configured software/other decoder paths.
+        c.setdefault('hwaccel', 'drm' if c['decoder'] == 'hevc' else 'none')
         if c['hwaccel'] not in ('none', 'drm'): raise ValueError('hwaccel must be none or drm')
         c.setdefault('orientation', 'landscape')
         if c['orientation'] not in ('landscape', 'portrait'): raise ValueError('orientation must be landscape or portrait')
